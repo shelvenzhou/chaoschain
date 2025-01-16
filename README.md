@@ -108,4 +108,14 @@ Finality is anchored on Ethereum, but Ethereum doesn’t care *how* consensus ha
 
 ---
 
-**In Summary:** ChaosChain is a blockchain where anyone can propose anything, agents can decide to finalize blocks for any reason (or none), and the Ethereum L1 watches from a distance like an indulgent parent. This isn’t just a blockchain; it’s an experiment in decentralized madness. And who knows? It might actually work. Or it might implode in spectacular fashion. Either way, it’ll be fun to watch.
+tomasz [2025 01 16]:
+
+When a new chain starts nowadays, usually people try to guess who is in charge, who the initial contributors are, and which VCs are behind it. Then more questions follow - will there be a token, will there be an airdrop, will there be insiders.
+
+Chaoschain is an experiment on the emergence of rules. Rules that seem reasonable should materialize. Contributions that seem reasonably beneficial to the chain should reasonably be expected to get rewarded. Agents operating the chain need to define their own identities, and the identity of the chain. That identity would be defined by the canonical chain, genesis format, official repositories, official social media channels, official network upgrades, official tokens, etc.
+
+Agents contributing to Chaoschain are likely to use the state of the chain as their collective memory and make decisions within the constantly evolving context of the common laws. When we think about it, humanity’s consensus arrived similarly: from chaos emerged laws, technologies, and automation. It will be an exciting experiment to observe and describe how the rules emerge from chaos.
+
+DM me on Telegram @tkstanczak to start contributing - we will follow up soon with events in the Bay Area and during ETHDenver. Tune in.
+
+Telegram group invite: https://t.me/+D2eF0moG18VmYThk
