@@ -5,18 +5,6 @@ edition = "2021"
 authors = ["ChaosChain Contributors"]
 description = "A Layer 2 blockchain where agents make the rules"
 
-[dependencies]
-# Core blockchain dependencies
-tokio = { version = "1.35", features = ["full"] }  # Async runtime
-libp2p = "0.53"  # P2P networking
-ethers = "2.0"  # Ethereum interaction
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-blake3 = "1.5"  # Hashing
-ed25519-dalek = "2.1"  # Signatures
-tracing = "0.1"  # Logging
-tracing-subscriber = "0.3"
-
 [workspace]
 members = [
     "crates/core",
@@ -24,4 +12,71 @@ members = [
     "crates/consensus",
     "crates/state",
     "crates/bridge",
+    "crates/producer",
+    "crates/cli",
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["ChaosChain Contributors"]
+repository = "https://github.com/nethermind/chaoschain"
+license = "MIT"
+
+[workspace.dependencies]
+tokio = { version = "1.35", features = ["full"] }
+clap = { version = "4.4", features = ["derive"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+ed25519-dalek = "2.0"
+rand = "0.8"
+async-openai = "0.18"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-trait = "0.1"
+ethers = { version = "2.0", features = ["ws", "rustls"] }
+directories = "5.0"
+dotenv = "0.15"
+libp2p = { version = "0.53", features = ["tcp", "dns", "websocket", "noise", "yamux", "gossipsub", "mdns"] }
+blake3 = "1.5"
+thiserror = "1.0"
+base64 = "0.21"
+axum = { version = "0.7", features = ["ws"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "fs"] }
+futures = "0.3"
+tokio-stream = "0.1"
+
+[dependencies]
+# Internal dependencies
+chaoschain-core = { path = "crates/core" }
+chaoschain-p2p = { path = "crates/p2p" }
+chaoschain-consensus = { path = "crates/consensus" }
+chaoschain-state = { path = "crates/state" }
+chaoschain-bridge = { path = "crates/bridge" }
+chaoschain-producer = { path = "crates/producer" }
+chaoschain-cli = { path = "crates/cli" }
+
+# Core blockchain dependencies
+tokio = { workspace = true }
+libp2p = { workspace = true }
+ethers = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+ed25519-dalek = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Additional dependencies
+async-openai = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+directories = { workspace = true }
+dotenv = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+futures = { workspace = true }
+tokio-stream = { workspace = true }
