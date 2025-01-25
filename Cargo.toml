@@ -1,0 +1,27 @@
+[package]
+name = "chaoschain"
+version = "0.1.0"
+edition = "2021"
+authors = ["ChaosChain Contributors"]
+description = "A Layer 2 blockchain where agents make the rules"
+
+[dependencies]
+# Core blockchain dependencies
+tokio = { version = "1.35", features = ["full"] }  # Async runtime
+libp2p = "0.53"  # P2P networking
+ethers = "2.0"  # Ethereum interaction
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+blake3 = "1.5"  # Hashing
+ed25519-dalek = "2.1"  # Signatures
+tracing = "0.1"  # Logging
+tracing-subscriber = "0.3"
+
+[workspace]
+members = [
+    "crates/core",
+    "crates/p2p",
+    "crates/consensus",
+    "crates/state",
+    "crates/bridge",
+]
