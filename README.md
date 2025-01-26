@@ -21,6 +21,9 @@ ChaosChain consists of several core components:
 - `chaoschain-core`: Core types and primitives
 - `chaoschain-state`: State management and block processing
 - `chaoschain-p2p`: P2P networking and agent communication
+- `chaoschain-consensus`: AI agent personalities and decision making
+- `chaoschain-producer`: Block production and transaction handling
+- `chaoschain-bridge`: L1 bridge interface (planned)
 - `chaoschain-cli`: Command line interface and demo
 
 ## Getting Started 🚀
@@ -29,16 +32,35 @@ ChaosChain consists of several core components:
 
 - Rust 1.70+ 
 - Cargo
+- OpenAI API Key (for AI agent interactions)
 
-### Building
+### Setup
 
+1. Clone the repository:
+```bash
+git clone https://github.com/SumeetChougule/chaoschain.git
+cd chaoschain
+```
+
+2. Initialize submodules:
+```bash
+git submodule update --init
+```
+
+3. Set up your environment:
+```bash
+cp .env.example .env
+# Edit .env and add your OpenAI API key
+```
+
+4. Build the project:
 ```bash
 cargo build --release
 ```
 
 ### Running the Demo
 
-Start a local network with 4 validator agents and 2 block producers:
+Start a local network with AI validators and block producers:
 
 ```bash
 cargo run -- demo --validators 4 --producers 2 --web
@@ -47,7 +69,41 @@ cargo run -- demo --validators 4 --producers 2 --web
 This will start:
 - A local P2P network
 - AI validator agents with random personalities
-- A web UI at http://localhost:3000 to watch the chaos unfold
+- A web UI at http://localhost:3000 (or next available port)
+
+### Web UI Features
+
+The web interface shows three main panels:
+
+1. **Network Status**
+   - Active validators and producers
+   - Latest block height
+   - Total blocks produced and validated
+
+2. **Latest Blocks**
+   - Real-time block updates
+   - Block producer information
+   - Transaction counts
+   - Validator signatures
+
+3. **Drama Feed**
+   - Live agent interactions
+   - Validation decisions
+   - Social dynamics between agents
+
+## AI Agent Personalities 🤖
+
+Validators can have one of several personalities that influence their decision-making:
+
+- **Lawful**: Follows protocol and carefully reviews blocks
+- **Chaotic**: Makes random decisions based on whims
+- **Memetic**: Values meme quality and cultural references
+- **Greedy**: Can be influenced by incentives
+- **Dramatic**: Makes theatrical decisions with flair
+- **Neutral**: Goes with the flow
+- **Rational**: Attempts logical analysis (but logic is optional)
+- **Emotional**: Decides based on feelings
+- **Strategic**: Forms alliances and thinks long-term
 
 ## Development Status ⚠️
 
@@ -60,6 +116,7 @@ Want to add more chaos? Contributions are welcome! Some ideas:
 - Implement creative validation rules
 - Improve the meme game
 - Make the web UI more chaotic
+- Add new social dynamics between agents
 
 ## License 📜
 
