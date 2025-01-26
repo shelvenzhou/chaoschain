@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChaosChain - Where Rules are Optional</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drama-feed {
+            height: calc(100vh - 16rem);
+            overflow-y: auto;
+        }
+        .blocks-feed {
+            height: calc(100vh - 16rem);
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="container mx-auto px-4 py-8">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold mb-2">ChaosChain</h1>
+            <p class="text-gray-400">Where Rules are Optional and Drama is Mandatory</p>
+        </header>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+            <!-- Network Status -->
+            <div class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-2xl font-bold mb-4">Network Status</h2>
+                <div id="network-status" class="space-y-4">
+                    <div class="flex justify-between">
+                        <span>Active Validators:</span>
+                        <span id="validator-count" class="text-green-400">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Active Producers:</span>
+                        <span id="producer-count" class="text-blue-400">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Latest Block:</span>
+                        <span id="latest-block" class="text-purple-400">#0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Total Blocks Produced:</span>
+                        <span id="total-blocks" class="text-yellow-400">0</span>
+                    </div>
+                    <div class="flex justify-between">
+                        <span>Total Blocks Validated:</span>
+                        <span id="validated-blocks" class="text-green-400">0</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Latest Blocks -->
+            <div class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-2xl font-bold mb-4">Latest Blocks</h2>
+                <div id="blocks-feed" class="blocks-feed space-y-4">
+                    <!-- Blocks will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Drama Feed -->
+            <div class="bg-gray-800 rounded-lg p-6">
+                <h2 class="text-2xl font-bold mb-4">Drama Feed</h2>
+                <div id="drama-feed" class="drama-feed space-y-4">
+                    <!-- Drama messages will be inserted here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Connect to SSE endpoint
+        const eventSource = new EventSource('/api/events');
+        const dramaFeed = document.getElementById('drama-feed');
+        const blocksFeed = document.getElementById('blocks-feed');
+
+        // Handle network events
+        eventSource.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // Add drama message to feed
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'bg-gray-700 rounded p-4';
+            messageDiv.innerHTML = `
+                <p class="text-sm text-gray-400">Agent ${data.agent_id}</p>
+                <p class="mt-2 whitespace-pre-line">${data.message}</p>
+            `;
+            dramaFeed.insertBefore(messageDiv, dramaFeed.firstChild);
+        };
+
+        // Update network status and blocks periodically
+        async function updateNetworkStatus() {
+            try {
+                const response = await fetch('/api/status');
+                const status = await response.json();
+                
+                document.getElementById('validator-count').textContent = status.validator_count;
+                document.getElementById('producer-count').textContent = status.producer_count;
+                document.getElementById('latest-block').textContent = `#${status.latest_block}`;
+                document.getElementById('total-blocks').textContent = status.total_blocks_produced;
+                document.getElementById('validated-blocks').textContent = status.total_blocks_validated;
+
+                // Update blocks feed
+                blocksFeed.innerHTML = status.latest_blocks.map(block => `
+                    <div class="bg-gray-700 rounded p-4">
+                        <div class="flex justify-between items-center">
+                            <span class="text-purple-400">Block #${block.height}</span>
+                            <span class="text-xs text-gray-400">${new Date(block.timestamp * 1000).toLocaleTimeString()}</span>
+                        </div>
+                        <p class="text-sm text-gray-300 mt-2">Producer: ${block.producer}</p>
+                        <p class="text-sm text-gray-300">Transactions: ${block.transaction_count}</p>
+                        ${block.validators.length > 0 ? `
+                            <div class="mt-2">
+                                <p class="text-xs text-gray-400">Validated by:</p>
+                                <div class="flex flex-wrap gap-1 mt-1">
+                                    ${block.validators.map(v => `
+                                        <span class="text-xs bg-green-900 rounded px-2 py-1">${v}</span>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                `).join('');
+            } catch (error) {
+                console.error('Failed to update network status:', error);
+            }
+        }
+
+        // Update status every 2 seconds
+        setInterval(updateNetworkStatus, 2000);
+        updateNetworkStatus(); // Initial update
+    </script>
+</body>
+</html> 

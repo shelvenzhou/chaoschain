@@ -2,8 +2,11 @@ use chaoschain_core::{Block, Error as CoreError, Transaction};
 use chaoschain_p2p::{AgentMessage, Message as P2PMessage};
 use async_openai::{Client, types::{ChatCompletionRequestMessage, Role}};
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, hex::Hex};
 use thiserror::Error;
 use tracing::{debug, info, warn};
+use anyhow::Result;
+use rand::Rng;
 
 /// Agent personality types
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,6 +21,23 @@ pub enum AgentPersonality {
     Memetic,
     /// Easily bribed with virtual cookies
     Greedy,
+    Dramatic,
+    Rational,
+    Emotional,
+    Strategic,
+}
+
+impl AgentPersonality {
+    pub fn random() -> Self {
+        let mut rng = rand::thread_rng();
+        match rng.gen_range(0..5) {
+            0 => Self::Lawful,
+            1 => Self::Neutral,
+            2 => Self::Chaotic,
+            3 => Self::Memetic,
+            _ => Self::Greedy,
+        }
+    }
 }
 
 /// Agent state
@@ -33,6 +53,18 @@ pub struct Agent {
     pub stake: u64,
     /// History of decisions
     pub decision_history: Vec<String>,
+}
+
+impl Agent {
+    pub fn new(public_key: [u8; 32], personality: AgentPersonality) -> Self {
+        Self {
+            public_key,
+            personality,
+            mood: String::new(),
+            stake: 0,
+            decision_history: Vec::new(),
+        }
+    }
 }
 
 /// Consensus configuration
@@ -61,17 +93,22 @@ pub enum Error {
     Internal(String),
 }
 
-/// Block vote from an agent
+/// Agent vote on a block
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BlockVote {
-    /// The block being voted on
+pub struct Vote {
+    /// Agent's public key
+    pub agent_id: String,
+    /// Block hash being voted on
+    #[serde_as(as = "[_; 32]")]
     pub block_hash: [u8; 32],
-    /// Whether the agent approves
+    /// Whether the agent approves the block
     pub approve: bool,
-    /// Reason for the decision
+    /// Reason for the vote
     pub reason: String,
     /// Optional meme URL
     pub meme_url: Option<String>,
     /// Agent's signature
+    #[serde_as(as = "[_; 64]")]
     pub signature: [u8; 64],
 } 

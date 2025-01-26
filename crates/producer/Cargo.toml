@@ -11,10 +11,11 @@ chaoschain-state = { path = "../state" }
 chaoschain-consensus = { path = "../consensus" }
 chaoschain-p2p = { path = "../p2p" }
 
-# Async runtime
+# Async
 tokio = { workspace = true }
+async-trait = "0.1"
 
-# AI/LLM integration
+# AI
 async-openai = { workspace = true }
 
 # Serialization

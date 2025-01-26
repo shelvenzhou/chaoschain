@@ -142,3 +142,9 @@ mod base64_serde {
 }
 
 pub mod mempool;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkEvent {
+    pub agent_id: String,
+    pub message: String,
+}

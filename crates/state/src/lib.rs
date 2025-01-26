@@ -1,15 +1,12 @@
 use chaoschain_core::{Block, ChainState, ChainConfig, Error as CoreError, Transaction};
 use ed25519_dalek::VerifyingKey as PublicKey;
 use parking_lot::RwLock;
-use tracing::warn;
+use tracing::info;
 use std::sync::Arc;
-use std::collections::HashMap;
-use chaoschain_core::{Block};
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tracing::{debug};
 use hex;
+use serde::{Serialize, Deserialize};
+use async_trait::async_trait;
 
 /// State update operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +42,8 @@ pub enum StateError {
 }
 
 /// State store interface
-pub trait StateStore {
+#[async_trait]
+pub trait StateStore: Send + Sync + std::fmt::Debug {
     /// Get a value by key
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StateError>;
     
@@ -54,10 +52,13 @@ pub trait StateStore {
     
     /// Get current state root
     fn state_root(&self) -> [u8; 32];
+
+    /// Get current block height
+    fn get_block_height(&self) -> u64;
 }
 
 /// Thread-safe state storage
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct StateStoreImpl {
     /// The current chain state
     state: Arc<RwLock<ChainState>>,
@@ -81,26 +82,40 @@ impl StateStoreImpl {
         }
     }
 
+    /// Get the latest N blocks
+    pub fn get_latest_blocks(&self, n: usize) -> Vec<Block> {
+        let blocks = self.blocks.read();
+        blocks.iter().rev().take(n).cloned().collect()
+    }
+
+    /// Get block timestamp (for now, just use block height * 10 seconds)
+    pub fn get_block_timestamp(&self, block: &Block) -> Option<u64> {
+        Some(block.height * 10)
+    }
+
     /// Add a whitelisted block producer
     pub fn add_block_producer(&self, producer: PublicKey) {
         let mut state = self.state.write();
-        if !state.producers.contains(&producer) {
-            state.producers.push(producer);
+        let producer_str = hex::encode(producer.as_bytes());
+        if !state.producers.contains(&producer_str) {
+            state.producers.push(producer_str);
         }
     }
 
     /// Check if an address is a valid block producer
     pub fn is_valid_producer(&self, producer: &PublicKey) -> bool {
         let state = self.state.read();
-        state.producers.contains(producer)
+        let producer_str = hex::encode(producer.as_bytes());
+        state.producers.contains(&producer_str)
     }
 
     /// Get balance of an account
     pub fn get_balance(&self, account: &PublicKey) -> u64 {
         let state = self.state.read();
+        let account_str = hex::encode(account.as_bytes());
         state.balances
             .iter()
-            .find(|(pk, _)| pk == account)
+            .find(|(pk, _)| pk == &account_str)
             .map(|(_, balance)| *balance)
             .unwrap_or(0)
     }
@@ -115,10 +130,12 @@ impl StateStoreImpl {
         // Apply block rewards if configured
         if let Some(reward) = self.config.block_reward {
             let mut state = self.state.write();
+            
+            // Clone producers and balances to avoid borrowing issues
             let producers = state.producers.clone();
             let mut new_balances = state.balances.clone();
             
-            // Update balances for each producer
+            // Add rewards for producers
             for producer in producers {
                 match new_balances.iter_mut().find(|(addr, _)| addr == &producer) {
                     Some((_, balance)) => *balance += reward,
@@ -162,6 +179,27 @@ impl Default for StateStoreImpl {
     }
 }
 
+impl StateStore for StateStoreImpl {
+    fn get(&self, _key: &[u8]) -> Result<Option<Vec<u8>>, StateError> {
+        // For now, just return None as we don't have key-value storage yet
+        Ok(None)
+    }
+    
+    fn apply_diff(&mut self, _diff: StateDiff) -> Result<(), StateError> {
+        // For now, just accept any state diff
+        Ok(())
+    }
+    
+    fn state_root(&self) -> [u8; 32] {
+        // For now, return zeros
+        [0u8; 32]
+    }
+
+    fn get_block_height(&self) -> u64 {
+        self.blocks.read().len() as u64
+    }
+}
+
 /// Chain state manager
 pub struct StateManager {
     /// Current chain state
@@ -196,24 +234,25 @@ impl StateManager {
             self.verify_transaction(tx, &state)?;
         }
 
-        // Update state root
-        *state = ChainState {
-            balances: state.balances.clone(),
-            producers: state.producers.clone(),
-        };
+        // Clone producers and balances to avoid borrowing conflicts
+        let producers = state.producers.clone();
+        let mut balances = state.balances.clone();
 
         // Apply block rewards
         if let Some(reward) = self.config.block_reward {
-            for producer in &state.producers {
-                if let Some((_, balance)) = state.balances.iter_mut()
-                    .find(|(addr, _)| addr == producer) {
+            for producer in producers {
+                if let Some((_, balance)) = balances.iter_mut()
+                    .find(|(addr, _)| addr == &producer) {
                     *balance += reward;
                 } else {
-                    state.balances.push((producer.clone(), reward));
+                    balances.push((producer.clone(), reward));
                 }
             }
         }
 
+        // Update state with new balances
+        state.balances = balances;
+        
         Ok(())
     }
 

@@ -2,7 +2,7 @@ use chaoschain_core::{Block, Transaction};
 use chaoschain_state::StateStore;
 use chaoschain_consensus::{Agent, Config as ConsensusConfig};
 use chaoschain_p2p::{Config as P2PConfig};
-use chaoschain_producer::{Config as ProducerConfig, Producer};
+use chaoschain_producer::{ProducerConfig, Producer};
 use chaoschain_bridge::{Config as BridgeConfig};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -30,22 +30,22 @@ pub struct Cli {
     config: Option<String>,
 
     #[command(subcommand)]
-    command: Commands,
+    pub command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum Commands {
-    /// Start a demo network
+    /// Run a demo with the specified number of validators and producers
     Demo {
-        /// Number of validator agents
-        #[arg(long, default_value_t = 4)]
-        validators: usize,
-        
-        /// Number of block producers
-        #[arg(long, default_value_t = 2)]
-        producers: usize,
-        
-        /// Start web UI
+        /// Number of validators to run
+        #[arg(long)]
+        validators: u32,
+
+        /// Number of producers to run
+        #[arg(long)]
+        producers: u32,
+
+        /// Whether to run the web interface
         #[arg(long)]
         web: bool,
     },

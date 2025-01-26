@@ -8,6 +8,7 @@ authors = ["ChaosChain Contributors"]
 # Internal dependencies
 chaoschain-core = { path = "../core" }
 chaoschain-p2p = { path = "../p2p" }
+chaoschain-state = { path = "../state" }
 
 # Async runtime
 tokio = { workspace = true }
@@ -18,6 +19,7 @@ async-openai = { workspace = true }
 # Serialization
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_with = { workspace = true }
 
 # Error handling
 thiserror = { workspace = true }
@@ -28,4 +30,7 @@ ed25519-dalek = { workspace = true }
 blake3 = { workspace = true }
 
 # Logging
-tracing = { workspace = true } 
+tracing = { workspace = true }
+
+# Random
+rand = { workspace = true } 

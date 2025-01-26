@@ -1,12 +1,13 @@
 use chaoschain_core::{Block, Error as CoreError};
-use chaoschain_state::{StateDiff, StateStore};
+use chaoschain_state::StateStore;
 use ethers::{
-    providers::{Provider, Ws},
-    types::{Address, H256, U256},
+    providers::Provider,
+    types::{Address, H256},
 };
 use serde::{Deserialize, Serialize};
+use serde_with::{serde_as, hex::Hex};
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 /// Bridge configuration
 #[derive(Debug, Clone)]
@@ -19,14 +20,18 @@ pub struct Config {
     pub required_confirmations: u64,
 }
 
-/// Bridge state update
+/// Represents a finalized block to be posted to L1
+#[serde_as]
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BridgeUpdate {
-    /// Block number this update is for
-    pub block_number: u64,
+pub struct FinalizedBlock {
+    /// Block hash
+    #[serde_as(as = "Hex")]
+    pub block_hash: [u8; 32],
     /// New state root
+    #[serde_as(as = "Hex")]
     pub state_root: [u8; 32],
     /// Aggregated signatures from agents
+    #[serde_as(as = "Vec<Hex>")]
     pub signatures: Vec<[u8; 64]>,
 }
 
@@ -46,7 +51,7 @@ pub enum Error {
 /// Bridge interface for L1 communication
 pub trait Bridge {
     /// Post a state update to L1
-    fn post_update(&mut self, update: BridgeUpdate) -> Result<H256, Error>;
+    fn post_update(&mut self, update: FinalizedBlock) -> Result<H256, Error>;
     
     /// Get latest finalized state root from L1
     fn latest_finalized_root(&self) -> Result<[u8; 32], Error>;

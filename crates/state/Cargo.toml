@@ -25,5 +25,8 @@ blake3 = { workspace = true }
 # Logging
 tracing = { workspace = true }
 
+# Async trait
+async-trait = { workspace = true }
+
 [dev-dependencies]
 rand = { workspace = true } 

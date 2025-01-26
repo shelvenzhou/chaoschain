@@ -1,31 +1,36 @@
 use chaoschain_core::{Block, Transaction, NetworkMessage};
 use libp2p::{
+    core::transport::Transport,
     gossipsub::{
         self,
-        Behaviour as GossipsubBehaviour,
-        ConfigBuilder as GossipsubConfigBuilder,
+        Gossipsub,
+        GossipsubConfigBuilder,
+        GossipsubMessage,
         MessageAuthenticity,
         ValidationMode,
-        Topic,
+        Topic as GossipsubTopic,
+        GossipsubEvent,
         IdentTopic,
     },
     identity::Keypair,
-    mdns::{self, tokio::Behaviour as MdnsBehaviour},
+    mdns::{Mdns, MdnsEvent},
     swarm::{NetworkBehaviour, SwarmEvent},
-    PeerId, Swarm,
-    core::transport::Transport,
+    Swarm,
+    PeerId,
     tcp,
     noise,
     yamux,
-    StreamProtocol,
-    SwarmBuilder,
 };
+use libp2p_swarm_derive::NetworkBehaviour;
 use serde::{Deserialize, Serialize};
 use tracing::info;
-use anyhow::{Result, anyhow};
-use thiserror::Error;
-use std::time::Duration;
+use anyhow::Result;
 use futures::StreamExt;
+use thiserror::Error;
+use std::error::Error as StdError;
+use tokio::sync::mpsc;
+use std::time::Duration;
+use sha2::Sha256;
 
 /// P2P message types for agent communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,8 +66,8 @@ pub struct Config {
 }
 
 /// P2P network errors
-#[derive(Debug, Error)]
-pub enum Error {
+#[derive(Debug, thiserror::Error)]
+pub enum NetworkError {
     #[error("Network error: {0}")]
     Network(String),
     #[error("Serialization error: {0}")]
@@ -102,6 +107,14 @@ pub enum AgentMessage {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlockVote {
+    pub block_hash: [u8; 32],
+    pub approve: bool,
+    pub reason: String,
+    pub meme_url: Option<String>,
+}
+
 /// Network topics for different message types
 pub struct NetworkTopics {
     blocks: IdentTopic,
@@ -119,29 +132,28 @@ impl NetworkTopics {
     }
 }
 
-/// Combined network behavior
 #[derive(NetworkBehaviour)]
-#[behaviour(out_event = "ChainEvent", event_process = false)]
+#[behaviour(out_event = "OutEvent")]
 pub struct ChainNetworkBehaviour {
-    gossipsub: GossipsubBehaviour,
-    mdns: MdnsBehaviour,
+    gossipsub: Gossipsub,
+    mdns: Mdns,
 }
 
 #[derive(Debug)]
-pub enum ChainEvent {
-    Gossipsub(gossipsub::Event),
-    Mdns(mdns::Event),
+pub enum OutEvent {
+    Gossipsub(GossipsubEvent),
+    Mdns(MdnsEvent),
 }
 
-impl From<gossipsub::Event> for ChainEvent {
-    fn from(event: gossipsub::Event) -> Self {
-        ChainEvent::Gossipsub(event)
+impl From<GossipsubEvent> for OutEvent {
+    fn from(event: GossipsubEvent) -> Self {
+        OutEvent::Gossipsub(event)
     }
 }
 
-impl From<mdns::Event> for ChainEvent {
-    fn from(event: mdns::Event) -> Self {
-        ChainEvent::Mdns(event)
+impl From<MdnsEvent> for OutEvent {
+    fn from(event: MdnsEvent) -> Self {
+        OutEvent::Mdns(event)
     }
 }
 
@@ -157,38 +169,43 @@ impl Network {
         let peer_id = PeerId::from(id_keys.public());
         info!("Local peer id: {peer_id}");
 
-        let transport = tcp::tokio::Transport::new(tcp::Config::default())
+        // Create transport
+        let noise_keys = noise::Keypair::<noise::X25519Spec>::new()
+            .into_authentic(&id_keys)
+            .expect("Signing libp2p-noise static DH keypair failed.");
+
+        let transport = tcp::TcpConfig::new()
+            .nodelay(true)
             .upgrade(libp2p::core::upgrade::Version::V1)
-            .authenticate(noise::Config::new(&id_keys)?)
-            .multiplex(yamux::Config::default())
+            .authenticate(noise::NoiseConfig::xx(noise_keys).into_authenticated())
+            .multiplex(yamux::YamuxConfig::default())
             .boxed();
 
-        let mut swarm = {
-            let gossipsub_config = GossipsubConfigBuilder::default()
-                .validation_mode(ValidationMode::Permissive)
-                .build()
-                .expect("Valid config");
+        // Create gossipsub
+        let gossipsub_config = GossipsubConfigBuilder::default()
+            .heartbeat_interval(Duration::from_secs(1))
+            .validation_mode(ValidationMode::Permissive)
+            .build()
+            .map_err(|msg| anyhow::anyhow!("Failed to build gossipsub config: {msg}"))?;
 
-            let gossipsub = GossipsubBehaviour::new(
-                MessageAuthenticity::Signed(id_keys.clone()),
-                gossipsub_config,
-            ).map_err(|e| anyhow!("Failed to create gossipsub: {}", e))?;
+        let gossipsub = Gossipsub::new(
+            MessageAuthenticity::Anonymous,
+            gossipsub_config,
+        ).map_err(|msg| anyhow::anyhow!("Failed to create gossipsub: {msg}"))?;
 
-            let mdns = MdnsBehaviour::new(Default::default(), peer_id)?;
+        // Create MDNS
+        let mdns = Mdns::new(Default::default()).await?;
 
-            let behaviour = ChainNetworkBehaviour {
-                gossipsub,
-                mdns,
-            };
-
-            Swarm::new(transport, behaviour, peer_id)
+        // Create behaviour
+        let behaviour = ChainNetworkBehaviour {
+            gossipsub,
+            mdns,
         };
 
-        let topics = NetworkTopics::new();
+        // Create swarm
+        let swarm = Swarm::new(transport, behaviour, peer_id);
 
-        swarm.behaviour_mut().gossipsub.subscribe(&topics.blocks)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&topics.transactions)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&topics.chat)?;
+        let topics = NetworkTopics::new();
 
         Ok(Self { swarm, topics })
     }
@@ -196,24 +213,30 @@ impl Network {
     pub async fn start(&mut self) -> Result<()> {
         self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
+        // Subscribe to topics
+        self.swarm.behaviour_mut().gossipsub.subscribe(&self.topics.blocks)?;
+        self.swarm.behaviour_mut().gossipsub.subscribe(&self.topics.transactions)?;
+        self.swarm.behaviour_mut().gossipsub.subscribe(&self.topics.chat)?;
+
         loop {
             match self.swarm.next().await.expect("Swarm stream is infinite") {
-                SwarmEvent::Behaviour(ChainEvent::Gossipsub(event)) => {
-                    if let gossipsub::Event::Message { message, .. } = event {
-                        let msg: NetworkMessage = serde_json::from_slice(&message.data)?;
-                        match msg {
-                            NetworkMessage::NewBlock(block) => {
-                                info!("Received new block: {:?}", block);
-                            }
-                            NetworkMessage::NewTransaction(tx) => {
-                                info!("Received new transaction: {:?}", tx);
-                            }
-                            NetworkMessage::Chat { from, message } => {
-                                info!("Chat from {}: {}", from, message);
-                            }
-                            NetworkMessage::AgentReasoning { agent, reasoning } => {
-                                info!("Agent {} reasoning: {}", agent, reasoning);
-                            }
+                SwarmEvent::Behaviour(OutEvent::Gossipsub(GossipsubEvent::Message { 
+                    message: GossipsubMessage { data, .. },
+                    ..
+                })) => {
+                    let msg: NetworkMessage = serde_json::from_slice(&data)?;
+                    match msg {
+                        NetworkMessage::NewBlock(block) => {
+                            info!("Received new block: {:?}", block);
+                        }
+                        NetworkMessage::NewTransaction(tx) => {
+                            info!("Received new transaction: {:?}", tx);
+                        }
+                        NetworkMessage::Chat { from, message } => {
+                            info!("Chat from {}: {}", from, message);
+                        }
+                        NetworkMessage::AgentReasoning { agent, reasoning } => {
+                            info!("Agent {} reasoning: {}", agent, reasoning);
                         }
                     }
                 }
@@ -248,4 +271,4 @@ impl Network {
 
         Ok(())
     }
-} 
+}

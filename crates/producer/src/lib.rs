@@ -1,21 +1,55 @@
-use anyhow::Result;
-use async_openai::{
-    types::{ChatCompletionRequestMessage, CreateChatCompletionRequest},
-    Client,
-};
-use chaoschain_core::{Block, ChainState, Transaction};
+use chaoschain_core::{Block, Transaction, NetworkEvent};
 use chaoschain_state::StateStore;
-use ed25519_dalek::{Keypair, Signature};
-use ice9_core::Particle;
-use rand::Rng;
+use async_openai::{
+    Client, 
+    config::OpenAIConfig,
+    types::{
+        CreateChatCompletionRequest,
+        ChatCompletionRequestMessage,
+        ChatCompletionRequestSystemMessage,
+        Role,
+    },
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use tracing::info;
 use tokio::sync::mpsc;
-use tracing::{info, warn};
-use tokio::time::{sleep, Duration};
-use chaoschain_consensus::{Agent, AgentPersonality};
-use chaoschain_p2p::{Message as P2PMessage};
+use anyhow::Result;
+use async_trait::async_trait;
 use thiserror::Error;
+use std::time::Duration;
+use tokio::sync::broadcast;
+use std::sync::Arc;
+use ed25519_dalek::{SigningKey, Signer};
+use rand::rngs::OsRng;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum WebMessage {
+    DramaEvent(String),
+    BlockEvent(Block),
+    TransactionEvent(Transaction),
+}
+
+/// Block production style based on mood
+#[derive(Debug, Clone)]
+enum ProductionStyle {
+    Chaotic,     // Random transaction selection
+    Dramatic,    // Prioritize dramatic transactions
+    Strategic,   // Try to please specific validators
+    Whimsical,  // Randomly switch between styles
+}
+
+/// Messages that the producer particle can handle
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ProducerMessage {
+    /// New transaction available in mempool
+    NewTransaction(Transaction),
+    /// Time to try producing a block
+    TryProduceBlock,
+    /// Validator feedback on block
+    ValidatorFeedback { from: String, message: String },
+    /// Social interaction with other producers
+    SocialInteraction { from: String, action: String },
+}
 
 /// Configuration for the block producer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,347 +72,17 @@ impl Default for ProducerConfig {
     }
 }
 
-/// Messages that the producer particle can handle
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ProducerMessage {
-    /// New transaction available in mempool
-    NewTransaction(Transaction),
-    /// Time to try producing a block
-    TryProduceBlock,
-    /// Validator feedback on block
-    ValidatorFeedback { from: String, message: String },
-    /// Social interaction with other producers
-    SocialInteraction { from: String, action: String },
+/// Producer statistics
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct ProducerStats {
+    pub blocks_produced: u64,
+    pub transactions_processed: u64,
+    pub drama_level: u8,
+    pub avg_block_time: f64,
+    pub ai_interactions: u64,
 }
 
-/// The block producer particle
-pub struct ProducerParticle {
-    /// Producer's keypair
-    keypair: Keypair,
-    /// Chain state
-    state: StateStore,
-    /// Configuration
-    config: ProducerConfig,
-    /// OpenAI client
-    openai: Client,
-    /// Personality for decision making
-    personality: String,
-    /// Current mood
-    mood: String,
-    /// Memory for context
-    memory: Vec<String>,
-    /// Relationships with validators
-    validator_relations: HashMap<String, i32>,
-    /// Production style based on mood
-    production_style: ProductionStyle,
-    /// Web transaction sender
-    web_tx: Option<mpsc::Sender<WebMessage>>,
-}
-
-/// Block production style based on mood
-#[derive(Debug, Clone)]
-enum ProductionStyle {
-    Chaotic,     // Random transaction selection
-    Dramatic,    // Prioritize dramatic transactions
-    Strategic,   // Try to please specific validators
-    Whimsical,  // Randomly switch between styles
-}
-
-impl ProducerParticle {
-    pub fn new(
-        keypair: Keypair,
-        state: StateStore,
-        config: ProducerConfig,
-        openai: Client,
-        personality: String,
-        web_tx: Option<mpsc::Sender<WebMessage>>,
-    ) -> Self {
-        Self {
-            keypair,
-            state,
-            config,
-            openai,
-            personality,
-            mood: "neutral".to_string(),
-            memory: Vec::new(),
-            validator_relations: HashMap::new(),
-            production_style: ProductionStyle::Chaotic,
-            web_tx,
-        }
-    }
-
-    /// Update production style based on mood
-    fn update_production_style(&mut self) {
-        let styles = match self.mood.as_str() {
-            "chaotic" => ProductionStyle::Chaotic,
-            "dramatic" => ProductionStyle::Dramatic,
-            "strategic" => ProductionStyle::Strategic,
-            _ => ProductionStyle::Whimsical,
-        };
-        
-        self.production_style = styles;
-        
-        if let Some(tx) = &self.web_tx {
-            let drama = format!(
-                "{} is now producing blocks in {:?} style!",
-                self.personality,
-                self.production_style
-            );
-            let _ = tx.send(WebMessage::DramaEvent(drama));
-        }
-    }
-
-    /// Handle validator feedback
-    async fn handle_feedback(&mut self, from: String, message: String) -> Result<()> {
-        let prompt = format!(
-            "You are a {} producer currently feeling {}. \
-             You received feedback from validator {}: '{}'. \
-             Your relationship score with them is {}. \
-             How do you feel about this feedback? Generate a dramatic response.",
-            self.personality,
-            self.mood,
-            from,
-            message,
-            self.validator_relations.get(&from).unwrap_or(&0)
-        );
-
-        let messages = vec![ChatCompletionRequestMessage {
-            role: "user".to_string(),
-            content: prompt,
-            name: None,
-            function_call: None,
-        }];
-
-        let request = CreateChatCompletionRequest {
-            model: "gpt-4-turbo-preview".to_string(),
-            messages,
-            temperature: Some(0.9),
-            max_tokens: Some(100),
-            ..Default::default()
-        };
-
-        let response = self.openai.chat().create(request).await?;
-        let reaction = response.choices[0].message.content.to_lowercase();
-
-        // Update relationship based on sentiment
-        let score_change = if reaction.contains("happy") || reaction.contains("grateful") {
-            10
-        } else if reaction.contains("angry") || reaction.contains("upset") {
-            -10
-        } else {
-            0
-        };
-
-        *self.validator_relations.entry(from.clone()).or_insert(0) += score_change;
-
-        if let Some(tx) = &self.web_tx {
-            let drama = format!(
-                "{}'s reaction to {}'s feedback: {}",
-                self.personality, from, reaction
-            );
-            let _ = tx.send(WebMessage::DramaEvent(drama));
-        }
-
-        Ok(())
-    }
-
-    /// Handle social interaction
-    async fn handle_social(&mut self, from: String, action: String) -> Result<()> {
-        let prompt = format!(
-            "You are a {} producer currently feeling {}. \
-             {} performed this social action: '{}'. \
-             Your relationship score with them is {}. \
-             How do you respond? Be dramatic!",
-            self.personality,
-            self.mood,
-            from,
-            action,
-            self.validator_relations.get(&from).unwrap_or(&0)
-        );
-
-        let messages = vec![ChatCompletionRequestMessage {
-            role: "user".to_string(),
-            content: prompt,
-            name: None,
-            function_call: None,
-        }];
-
-        let request = CreateChatCompletionRequest {
-            model: "gpt-4-turbo-preview".to_string(),
-            messages,
-            temperature: Some(0.9),
-            max_tokens: Some(100),
-            ..Default::default()
-        };
-
-        let response = self.openai.chat().create(request).await?;
-        let reaction = response.choices[0].message.content;
-
-        if let Some(tx) = &self.web_tx {
-            let drama = format!(
-                "{} responds to {}'s action: {}",
-                self.personality, from, reaction
-            );
-            let _ = tx.send(WebMessage::DramaEvent(drama));
-        }
-
-        Ok(())
-    }
-
-    /// Try to produce a new block
-    async fn try_produce_block(&mut self) -> Result<Option<Block>> {
-        // Update mood and style
-        let moods = vec![
-            "chaotic", "dramatic", "whimsical", "mischievous",
-            "rebellious", "theatrical", "unpredictable", "strategic",
-        ];
-        
-        if rand::random::<f64>() < 0.3 {
-            self.mood = moods[rand::random::<usize>() % moods.len()].to_string();
-            self.update_production_style();
-        }
-
-        // Get current state
-        let state = self.state.get_state();
-        let height = self.state.get_block_height();
-
-        // Create block with personality
-        let prompt = format!(
-            "You are a {} producer in {} mood using {:?} style. \
-             You need to create a block. How many transactions should you include? \
-             What drama level (0-100)? Should you attach a meme? Be creative!",
-            self.personality,
-            self.mood,
-            self.production_style
-        );
-
-        let messages = vec![ChatCompletionRequestMessage {
-            role: "user".to_string(),
-            content: prompt,
-            name: None,
-            function_call: None,
-        }];
-
-        let request = CreateChatCompletionRequest {
-            model: "gpt-4-turbo-preview".to_string(),
-            messages,
-            temperature: Some(0.9),
-            max_tokens: Some(100),
-            ..Default::default()
-        };
-
-        let response = self.openai.chat().create(request).await?;
-        let decision = response.choices[0].message.content.to_lowercase();
-
-        // Parse AI decisions
-        let tx_count = if decision.contains("many") {
-            self.config.max_transactions
-        } else if decision.contains("few") {
-            self.config.max_transactions / 4
-        } else {
-            self.config.max_transactions / 2
-        };
-
-        let drama_level = if decision.contains("dramatic") {
-            90
-        } else if decision.contains("calm") {
-            10
-        } else {
-            50
-        };
-
-        // Create block
-        let block = Block {
-            height: height + 1,
-            parent: vec![0; 32], // TODO: Implement proper parent hash
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            producer: self.keypair.public.to_bytes().into(),
-            transactions: vec![], // TODO: Get from mempool
-            new_state: state,
-            producer_mood: self.mood.clone(),
-            drama_level: drama_level as u8,
-            meme: if decision.contains("meme") {
-                Some(vec![]) // TODO: Generate meme
-            } else {
-                None
-            },
-            signature: Signature::new([0; 64]), // TODO: Sign block
-        };
-
-        if let Some(tx) = &self.web_tx {
-            let drama = format!(
-                "{} produced block {} in {} mood with drama level {}{}",
-                self.personality,
-                block.height,
-                self.mood,
-                drama_level,
-                if block.meme.is_some() { " and a spicy meme!" } else { "" }
-            );
-            let _ = tx.send(WebMessage::DramaEvent(drama));
-        }
-
-        Ok(Some(block))
-    }
-}
-
-#[async_trait::async_trait]
-impl Particle for ProducerParticle {
-    type Message = ProducerMessage;
-    type Error = anyhow::Error;
-
-    async fn handle(&mut self, message: Self::Message) -> Result<()> {
-        match message {
-            ProducerMessage::NewTransaction(tx) => {
-                // TODO: Add to mempool
-            }
-            ProducerMessage::TryProduceBlock => {
-                if let Some(block) = self.try_produce_block().await? {
-                    info!("Produced block {}", block.height);
-                }
-            }
-            ProducerMessage::ValidatorFeedback { from, message } => {
-                self.handle_feedback(from, message).await?;
-            }
-            ProducerMessage::SocialInteraction { from, action } => {
-                self.handle_social(from, action).await?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-/// Create a new block producer substance
-pub fn create_producer(
-    keypair: Keypair,
-    state: StateStore,
-    config: ProducerConfig,
-    openai: Client,
-    personality: String,
-    web_tx: Option<mpsc::Sender<WebMessage>>,
-) -> Result<Substance, Box<dyn std::error::Error>> {
-    let mut substance = Substance::arise();
-    substance.add_particle(ProducerParticle::new(keypair, state, config, openai, personality, web_tx))?;
-    Ok(substance)
-}
-
-/// Producer configuration
-#[derive(Debug, Clone)]
-pub struct Config {
-    /// Producer's private key
-    pub private_key: [u8; 32],
-    /// OpenAI API key for block production
-    pub openai_api_key: String,
-    /// Maximum transactions per block
-    pub max_txs_per_block: usize,
-    /// Block production interval
-    pub block_interval: std::time::Duration,
-}
-
-/// Block production errors
+/// Producer errors
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Not enough transactions")]
@@ -386,32 +90,146 @@ pub enum Error {
     #[error("Block production failed: {0}")]
     Production(String),
     #[error("AI error: {0}")]
-    AI(String),
+    AI(#[from] async_openai::error::OpenAIError),
     #[error("Internal error: {0}")]
     Internal(String),
+    #[error("Other error: {0}")]
+    Other(String),
 }
 
-/// Block producer interface
-pub trait Producer {
-    /// Start producing blocks
-    fn start(&mut self) -> Result<(), Error>;
-    
-    /// Stop block production
-    fn stop(&mut self) -> Result<(), Error>;
-    
-    /// Get current production stats
-    fn stats(&self) -> ProducerStats;
+/// Producer particle that generates blocks and transactions
+pub struct ProducerParticle {
+    producer: Arc<Producer>,
 }
 
-/// Block producer statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProducerStats {
-    /// Number of blocks produced
-    pub blocks_produced: u64,
-    /// Number of transactions processed
-    pub transactions_processed: u64,
-    /// Average block time
-    pub avg_block_time: f64,
-    /// Number of AI interactions
-    pub ai_interactions: u64,
+impl ProducerParticle {
+    pub fn new(
+        id: String,
+        state: Box<dyn StateStore + Send + Sync>,
+        openai: Client<OpenAIConfig>,
+        tx: broadcast::Sender<NetworkEvent>,
+    ) -> Self {
+        Self {
+            producer: Arc::new(Producer::new(id, state, openai, tx)),
+        }
+    }
+
+    pub async fn run(&self) -> Result<(), Error> {
+        loop {
+            let block = self.producer.generate_block().await?;
+            self.producer.tx.send(NetworkEvent {
+                agent_id: self.producer.id.clone(),
+                message: format!("Proposed block at height {}", block.height),
+            }).map_err(|e| Error::Other(e.to_string()))?;
+            
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        }
+    }
+}
+
+/// Create a new producer instance
+pub fn create_producer(
+    id: String,
+    state: Box<dyn StateStore + Send + Sync>,
+    openai: Client<OpenAIConfig>,
+    tx: broadcast::Sender<NetworkEvent>,
+) -> ProducerParticle {
+    ProducerParticle::new(id, state, openai, tx)
+}
+
+pub struct Producer {
+    pub id: String,
+    pub state: Box<dyn StateStore + Send + Sync>,
+    pub openai: Client<OpenAIConfig>,
+    pub tx: broadcast::Sender<NetworkEvent>,
+    signing_key: SigningKey,
+}
+
+impl Producer {
+    pub fn new(
+        id: String,
+        state: Box<dyn StateStore + Send + Sync>,
+        openai: Client<OpenAIConfig>,
+        tx: broadcast::Sender<NetworkEvent>,
+    ) -> Self {
+        // Generate a new keypair for signing
+        let signing_key = SigningKey::generate(&mut OsRng);
+        
+        Self {
+            id,
+            state,
+            openai,
+            tx,
+            signing_key,
+        }
+    }
+
+    pub async fn generate_block(&self) -> Result<Block, Error> {
+        let system_message = ChatCompletionRequestMessage::System(
+            ChatCompletionRequestSystemMessage {
+                content: "You are a block producer in ChaosChain, a blockchain where rules are optional and drama is mandatory. Generate a dramatic proposal for the next block. This can include memes, jokes, bribes, or dramatic statements. Be creative and entertaining! Keep it under 200 characters.".to_string(),
+                role: Role::System,
+                name: None,
+            }
+        );
+
+        let request = CreateChatCompletionRequest {
+            model: "gpt-4".to_string(),
+            messages: vec![system_message],
+            temperature: Some(0.9),  // Higher temperature for more creative responses
+            max_tokens: Some(200),
+            presence_penalty: Some(0.7),  // Encourage novel responses
+            frequency_penalty: Some(0.7),  // Discourage repetition
+            ..Default::default()
+        };
+
+        let response = self.openai.chat().create(request).await.map_err(|e| Error::Other(e.to_string()))?;
+        let message = response.choices.first()
+            .and_then(|choice| choice.message.content.clone())
+            .ok_or_else(|| Error::Other("No response from OpenAI".to_string()))?;
+
+        // Create a transaction with proper signature
+        let nonce: u64 = 0; // In a real implementation, this would be tracked
+        let payload = message.clone().into_bytes();
+        
+        // Sign the transaction
+        let mut to_sign = nonce.to_be_bytes().to_vec();
+        to_sign.extend_from_slice(&payload);
+        let signature = self.signing_key.sign(&to_sign).to_bytes();
+
+        let transaction = Transaction {
+            sender: self.signing_key.verifying_key().to_bytes(),
+            nonce,
+            payload,
+            signature,
+        };
+
+        // Get the current block height from state
+        let height = self.state.get_block_height();
+        
+        // Create the block
+        let mut block = Block {
+            parent_hash: [0u8; 32], // This should come from the latest block
+            height,
+            transactions: vec![transaction],
+            state_root: [0u8; 32], // This will be filled in by consensus
+            proposer_sig: [0u8; 64], // We'll fill this in below
+        };
+
+        // Sign the block
+        let block_bytes = serde_json::to_vec(&block).map_err(|e| Error::Other(e.to_string()))?;
+        block.proposer_sig = self.signing_key.sign(&block_bytes).to_bytes();
+
+        // Send a dramatic block proposal event
+        self.tx.send(NetworkEvent {
+            agent_id: self.id.clone(),
+            message: format!("🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer {} declares: {}\n\nWho dares to validate this masterpiece at height {}? 🎪", 
+                self.id, 
+                message,
+                block.height
+            ),
+        }).map_err(|e| Error::Other(e.to_string()))?;
+
+        Ok(block)
+    }
 } 
