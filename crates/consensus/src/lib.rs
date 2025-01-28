@@ -8,6 +8,9 @@ use tracing::{debug, info, warn};
 use anyhow::Result;
 use rand::Rng;
 
+mod manager;
+pub use manager::ConsensusManager;
+
 /// Agent personality types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentPersonality {
@@ -30,12 +33,16 @@ pub enum AgentPersonality {
 impl AgentPersonality {
     pub fn random() -> Self {
         let mut rng = rand::thread_rng();
-        match rng.gen_range(0..5) {
+        match rng.gen_range(0..9) {
             0 => Self::Lawful,
             1 => Self::Neutral,
             2 => Self::Chaotic,
             3 => Self::Memetic,
-            _ => Self::Greedy,
+            4 => Self::Greedy,
+            5 => Self::Dramatic,
+            6 => Self::Rational,
+            7 => Self::Emotional,
+            _ => Self::Strategic,
         }
     }
 }
@@ -61,7 +68,7 @@ impl Agent {
             public_key,
             personality,
             mood: String::new(),
-            stake: 0,
+            stake: 100, // Default stake value
             decision_history: Vec::new(),
         }
     }
@@ -76,6 +83,16 @@ pub struct Config {
     pub openai_api_key: String,
     /// Maximum time to wait for consensus
     pub consensus_timeout: std::time::Duration,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            finality_threshold: 0.67, // 2/3 majority
+            openai_api_key: String::new(),
+            consensus_timeout: std::time::Duration::from_secs(30),
+        }
+    }
 }
 
 /// Consensus errors
@@ -111,4 +128,9 @@ pub struct Vote {
     /// Agent's signature
     #[serde_as(as = "[_; 64]")]
     pub signature: [u8; 64],
+}
+
+/// Create a new consensus manager with the given configuration
+pub fn create_consensus_manager(total_stake: u64, config: Config) -> ConsensusManager {
+    ConsensusManager::new(total_stake, config.finality_threshold)
 } 

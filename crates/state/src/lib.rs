@@ -55,6 +55,9 @@ pub trait StateStore: Send + Sync + std::fmt::Debug {
 
     /// Get current block height
     fn get_block_height(&self) -> u64;
+
+    /// Apply a block to state
+    fn apply_block(&self, block: &Block) -> Result<(), StateError>;
 }
 
 /// Thread-safe state storage
@@ -120,39 +123,6 @@ impl StateStoreImpl {
             .unwrap_or(0)
     }
 
-    /// Apply a block to state
-    pub fn apply_block(&self, block: Block) -> Result<(), StateError> {
-        // Verify transactions
-        for tx in &block.transactions {
-            self.verify_transaction(tx)?;
-        }
-
-        // Apply block rewards if configured
-        if let Some(reward) = self.config.block_reward {
-            let mut state = self.state.write();
-            
-            // Clone producers and balances to avoid borrowing issues
-            let producers = state.producers.clone();
-            let mut new_balances = state.balances.clone();
-            
-            // Add rewards for producers
-            for producer in producers {
-                match new_balances.iter_mut().find(|(addr, _)| addr == &producer) {
-                    Some((_, balance)) => *balance += reward,
-                    None => new_balances.push((producer, reward)),
-                }
-            }
-            
-            // Update state with new balances
-            state.balances = new_balances;
-        }
-
-        // Store block
-        self.blocks.write().push(block);
-
-        Ok(())
-    }
-
     /// Verify a transaction
     fn verify_transaction(&self, _tx: &Transaction) -> Result<(), StateError> {
         // In ChaosChain, we don't care about balances!
@@ -180,23 +150,53 @@ impl Default for StateStoreImpl {
 }
 
 impl StateStore for StateStoreImpl {
-    fn get(&self, _key: &[u8]) -> Result<Option<Vec<u8>>, StateError> {
-        // For now, just return None as we don't have key-value storage yet
+    fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StateError> {
         Ok(None)
     }
     
     fn apply_diff(&mut self, _diff: StateDiff) -> Result<(), StateError> {
-        // For now, just accept any state diff
         Ok(())
     }
     
     fn state_root(&self) -> [u8; 32] {
-        // For now, return zeros
         [0u8; 32]
     }
 
     fn get_block_height(&self) -> u64 {
         self.blocks.read().len() as u64
+    }
+
+    fn apply_block(&self, block: &Block) -> Result<(), StateError> {
+        // Apply block rewards if configured
+        if let Some(reward) = self.config.block_reward {
+            let mut state = self.state.write();
+            
+            // Clone producers and balances to avoid borrowing issues
+            let producers = state.producers.clone();
+            let mut new_balances = state.balances.clone();
+            
+            // Add rewards for producers
+            for producer in producers {
+                match new_balances.iter_mut().find(|(addr, _)| addr == &producer) {
+                    Some((_, balance)) => *balance += reward,
+                    None => new_balances.push((producer, reward)),
+                }
+            }
+            
+            // Update state with new balances
+            state.balances = new_balances;
+        }
+
+        // Store block
+        let mut blocks = self.blocks.write();
+        
+        // Store the block - in ChaosChain blocks can come in any order!
+        blocks.push(block.clone());
+        
+        // Sort blocks by height to maintain order
+        blocks.sort_by_key(|b| b.height);
+
+        Ok(())
     }
 }
 

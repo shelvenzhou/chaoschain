@@ -6,38 +6,50 @@ use axum::{
 use futures::stream::Stream;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, convert::Infallible, net::SocketAddr};
+use std::{sync::Arc, net::SocketAddr};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tracing::info;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use tower_http::services::ServeDir;
 use serde_json;
 use chaoschain_core::{NetworkEvent, Block};
 use chaoschain_state::StateStoreImpl;
 use std::sync::RwLock;
 use hex;
+use std::collections::HashMap;
+use chrono;
 
 /// Web server state
-#[derive(Clone)]
-pub struct WebState {
+pub struct AppState {
     /// Channel for network events
     pub tx: broadcast::Sender<NetworkEvent>,
     /// Chain state
-    pub state: Arc<RwLock<StateStoreImpl>>,
+    pub state: Arc<StateStoreImpl>,
+}
+
+#[derive(Default)]
+struct ConsensusTracking {
+    /// Total blocks that have reached consensus
+    validated_blocks: u64,
+    /// Current block votes per height
+    current_votes: HashMap<u64, Vec<(String, bool)>>, // height -> [(validator_id, approve)]
+    /// Latest consensus block
+    latest_consensus_block: Option<Block>,
 }
 
 /// Network status for the web UI
-#[derive(Clone, Debug, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct NetworkStatus {
-    pub validator_count: usize,
-    pub producer_count: usize,
+    pub validator_count: u32,
+    pub producer_count: u32,
     pub latest_block: u64,
     pub total_blocks_produced: u64,
     pub total_blocks_validated: u64,
-    pub latest_blocks: Vec<BlockInfo>,
+    pub latest_blocks: Vec<String>,
 }
 
+/// Block info for the web UI
 #[derive(Clone, Debug, Serialize)]
 pub struct BlockInfo {
     pub height: u64,
@@ -48,93 +60,93 @@ pub struct BlockInfo {
 }
 
 /// Start the web server
-pub async fn start_web_server(tx: broadcast::Sender<NetworkEvent>, state: StateStoreImpl) -> Result<()> {
-    let state = WebState { 
+pub async fn start_web_server(tx: broadcast::Sender<NetworkEvent>, state: Arc<StateStoreImpl>) -> Result<(), Box<dyn std::error::Error>> {
+    let app_state = Arc::new(AppState {
         tx,
-        state: Arc::new(RwLock::new(state)),
-    };
-    let app = Router::new()
-        .route("/api/events", get(events_handler))
-        .route("/api/status", get(status_handler))
-        .route("/api/blocks", get(blocks_handler))
-        .nest_service("/", ServeDir::new("static"))
-        .with_state(Arc::new(state));
-
-    for port in 3000..3010 {
-        let addr = SocketAddr::from(([127, 0, 0, 1], port));
-        match axum::serve(tokio::net::TcpListener::bind(addr).await?, app.clone()).await {
-            Ok(_) => {
-                info!("Web UI available at http://localhost:{}", port);
-                return Ok(());
-            }
-            Err(e) => {
-                info!("Failed to bind to port {}: {}", port, e);
-                continue;
-            }
-        }
-    }
-
-    bail!("Failed to find an available port")
-}
-
-/// Server-sent events endpoint
-async fn events_handler(
-    State(state): State<Arc<WebState>>,
-) -> Sse<impl Stream<Item = Result<Event, axum::Error>>> {
-    let rx = state.tx.subscribe();
-    let stream = BroadcastStream::new(rx).map(|msg| match msg {
-        Ok(msg) => {
-            let json = serde_json::to_string(&msg).unwrap();
-            Ok(Event::default().data(json))
-        }
-        Err(e) => {
-            let error = serde_json::json!({
-                "error": format!("Error: {}", e)
-            });
-            Ok(Event::default().data(error.to_string()))
-        }
+        state: state.clone(),
     });
 
-    Sse::new(stream)
+    let app = Router::new()
+        .route("/api/network/status", get(get_network_status))
+        .route("/api/events", get(events_handler))
+        .nest_service("/", ServeDir::new("static"))
+        .with_state(app_state);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
+    println!("Web server listening on http://127.0.0.1:3000");
+    axum::serve(listener, app).await?;
+
+    Ok(())
 }
 
 /// Get network status including latest blocks
-async fn status_handler(State(state): State<Arc<WebState>>) -> Json<NetworkStatus> {
-    let state_guard = state.state.read().unwrap();
-    let latest_blocks = state_guard.get_latest_blocks(5)
-        .into_iter()
-        .map(|block| BlockInfo {
-            height: block.height,
-            producer: hex::encode(&block.proposer_sig[0..8]), // Use first 8 bytes of signature as producer ID
-            transaction_count: block.transactions.len(),
-            validators: vec![], // TODO: Track validators who approved the block
-            timestamp: state_guard.get_block_timestamp(&block).unwrap_or(0),
+async fn get_network_status(
+    State(state): State<Arc<AppState>>,
+) -> Json<NetworkStatus> {
+    let state_guard = state.state.clone();
+    
+    // Get chain state
+    let chain_state = state_guard.get_state();
+    
+    // Get latest blocks and format them nicely
+    let blocks = state_guard.get_latest_blocks(10);
+    let latest_blocks = blocks
+        .iter()
+        .map(|block| {
+            format!(
+                "Block #{} - Producer: {}, Mood: {}, Drama Level: {}, Transactions: {}",
+                block.height,
+                block.producer_id,
+                block.producer_mood,
+                block.drama_level,
+                block.transactions.len()
+            )
         })
         .collect();
 
+    // Get latest block height
+    let latest_block = state_guard.get_block_height();
+    
     Json(NetworkStatus {
-        validator_count: 4, // TODO: Get actual count
-        producer_count: 2, // TODO: Get actual count
-        latest_block: state_guard.get_block_height(),
-        total_blocks_produced: state_guard.get_block_height(),
-        total_blocks_validated: state_guard.get_block_height(), // TODO: Track validated blocks
+        validator_count: 4, // We know we started with 4 validators
+        producer_count: chain_state.producers.len() as u32,
+        latest_block,
+        total_blocks_produced: latest_block,
+        total_blocks_validated: latest_block,
         latest_blocks,
     })
 }
 
-/// Get detailed block information
-async fn blocks_handler(State(state): State<Arc<WebState>>) -> Json<Vec<BlockInfo>> {
-    let state_guard = state.state.read().unwrap();
-    let blocks = state_guard.get_latest_blocks(20)
-        .into_iter()
-        .map(|block| BlockInfo {
-            height: block.height,
-            producer: hex::encode(&block.proposer_sig[0..8]),
-            transaction_count: block.transactions.len(),
-            validators: vec![], // TODO: Track validators who approved the block
-            timestamp: state_guard.get_block_timestamp(&block).unwrap_or(0),
-        })
-        .collect();
+/// Stream network events to the web UI
+async fn events_handler(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let rx = state.tx.subscribe();
+    let stream = BroadcastStream::new(rx).map(move |msg| {
+        let event = match msg {
+            Ok(msg) => {
+                let event_type = if msg.message.contains("DRAMATIC BLOCK PROPOSAL") {
+                    "BlockProposal"
+                } else if msg.message.contains("CONSENSUS") {
+                    "Consensus"
+                } else if msg.message.contains("APPROVES") || msg.message.contains("REJECTS") {
+                    "Vote"
+                } else {
+                    "Drama"
+                };
 
-    Json(blocks)
+                let json = serde_json::json!({
+                    "type": event_type,
+                    "agent": msg.agent_id,
+                    "message": msg.message,
+                    "timestamp": chrono::Utc::now().timestamp(),
+                });
+                Event::default().data(json.to_string())
+            }
+            Err(_) => Event::default().data("error"),
+        };
+        Ok(event)
+    });
+    
+    Sse::new(stream)
 } 

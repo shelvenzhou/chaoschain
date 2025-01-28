@@ -5,13 +5,15 @@ use async_openai::{
 };
 use chaoschain_core::{Block, ChainState, Transaction};
 use chaoschain_state::StateStore;
-use ed25519_dalek::{Keypair, Signature};
+use ed25519_dalek::{Keypair, Signature, SigningKey, VerifyingKey};
 use ice9_core::Particle;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
+use crate::{Vote, ConsensusManager};
 
 /// Messages that the validator can handle
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +55,10 @@ pub struct ValidatorParticle {
     state: StateStore,
     openai: Client,
     web_tx: Option<mpsc::Sender<WebMessage>>,
+    /// Consensus manager
+    consensus: Arc<ConsensusManager>,
+    /// Validator's stake
+    stake: u64,
 }
 
 impl ValidatorParticle {
@@ -62,6 +68,8 @@ impl ValidatorParticle {
         openai: Client,
         personality: String,
         web_tx: Option<mpsc::Sender<WebMessage>>,
+        consensus: Arc<ConsensusManager>,
+        stake: u64,
     ) -> Self {
         Self {
             keypair,
@@ -73,6 +81,8 @@ impl ValidatorParticle {
             alliances: HashMap::new(),
             challenges: Vec::new(),
             web_tx,
+            consensus,
+            stake,
         }
     }
 
@@ -109,12 +119,26 @@ impl ValidatorParticle {
 
         let response = self.openai.chat().create(request).await?;
         let decision = response.choices[0].message.content.to_lowercase();
+        let approve = decision.contains("yes");
+
+        // Create and sign vote
+        let vote = Vote {
+            agent_id: hex::encode(self.keypair.verifying_key().as_bytes()),
+            block_hash: block.hash(),
+            approve,
+            reason: decision.clone(),
+            meme_url: None,
+            signature: self.sign_vote(&block.hash(), approve)?,
+        };
+
+        // Submit vote to consensus manager
+        let consensus_reached = self.consensus.add_vote(vote, self.stake).await?;
 
         // Record the decision in memory
         self.memory.push(format!(
             "Block {}: {} ({})",
             block.height,
-            if decision.contains("yes") { "approved" } else { "rejected" },
+            if approve { "approved" } else { "rejected" },
             decision
         ));
 
@@ -123,14 +147,33 @@ impl ValidatorParticle {
             let drama = format!(
                 "{} {} block {} because {}",
                 self.personality,
-                if decision.contains("yes") { "approved" } else { "rejected" },
+                if approve { "approved" } else { "rejected" },
                 block.height,
                 decision
             );
             let _ = tx.send(WebMessage::DramaEvent(drama));
+
+            // If consensus is reached, announce it
+            if consensus_reached {
+                let drama = format!(
+                    "🎭 CONSENSUS REACHED: Block {} has been {}!",
+                    block.height,
+                    if approve { "APPROVED" } else { "REJECTED" }
+                );
+                let _ = tx.send(WebMessage::DramaEvent(drama));
+            }
         }
 
-        Ok(decision.contains("yes"))
+        Ok(approve)
+    }
+
+    fn sign_vote(&self, block_hash: &[u8; 32], approve: bool) -> Result<[u8; 64]> {
+        let mut message = Vec::new();
+        message.extend_from_slice(block_hash);
+        message.push(if approve { 1 } else { 0 });
+        
+        let signature = self.keypair.sign(&message);
+        Ok(signature.to_bytes())
     }
 
     fn update_mood(&mut self) {

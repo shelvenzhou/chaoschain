@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use sha2::{Sha256, Digest};
 
 /// Core error types
 #[derive(Debug, Error)]
@@ -58,6 +59,37 @@ pub struct Block {
     /// Block proposer's signature
     #[serde(with = "base64_serde")]
     pub proposer_sig: [u8; 64],
+    /// Drama level of the block (0-9)
+    pub drama_level: u8,
+    /// Producer's mood when creating the block
+    pub producer_mood: String,
+    /// ID of the producer who created this block
+    pub producer_id: String,
+}
+
+impl Block {
+    /// Calculate the block hash
+    pub fn hash(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        
+        // Add block fields to hasher
+        hasher.update(self.height.to_be_bytes());
+        for tx in &self.transactions {
+            hasher.update(&tx.sender);
+            hasher.update(tx.nonce.to_be_bytes());
+            hasher.update(&tx.payload);
+            hasher.update(&tx.signature);
+        }
+        hasher.update(&self.proposer_sig);
+        hasher.update([self.drama_level]);
+        hasher.update(self.producer_mood.as_bytes());
+
+        // Return the hash
+        let result = hasher.finalize();
+        let mut hash = [0u8; 32];
+        hash.copy_from_slice(&result[..]);
+        hash
+    }
 }
 
 /// Chain state
