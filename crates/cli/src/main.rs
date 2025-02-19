@@ -217,7 +217,7 @@ async fn main() -> Result<()> {
             // Initialize OpenAI config
             let openai_config = OpenAIConfig::from_env()
                 .map_err(|e| anyhow::anyhow!("Failed to load OpenAI config: {}", e))?;
-            let openai = async_openai::Client::new().with_api_key(openai_config.api_key);
+            let openai = async_openai::Client::new().with_api_key(openai_config.api_key).with_api_base("https://api.red-pill.ai/v1");
 
             // Initialize P2P network
             let mut network = Network::new().await
