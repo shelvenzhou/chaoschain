@@ -5,7 +5,7 @@ use ethers::{
     types::{Address, H256},
 };
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, hex::Hex};
+use serde_with::{hex::Hex, serde_as};
 use thiserror::Error;
 use tracing::info;
 
@@ -52,10 +52,10 @@ pub enum Error {
 pub trait Bridge {
     /// Post a state update to L1
     fn post_update(&mut self, update: FinalizedBlock) -> Result<H256, Error>;
-    
+
     /// Get latest finalized state root from L1
     fn latest_finalized_root(&self) -> Result<[u8; 32], Error>;
-    
+
     /// Check if a block hash exists on L1
     fn verify_block_inclusion(&self, block_hash: [u8; 32]) -> Result<bool, Error>;
-} 
+}

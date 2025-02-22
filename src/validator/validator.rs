@@ -23,10 +23,7 @@ pub struct ValidatorPersonality {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ValidatorMessage {
     /// Request for block validation with dramatic announcement
-    ValidateBlock {
-        block: Block,
-        announcement: String,
-    },
+    ValidateBlock { block: Block, announcement: String },
     /// Social commentary about a block
     DiscussBlock {
         block_hash: BlockHash,
@@ -118,13 +115,13 @@ impl ValidatorParticle {
 
         // Get LLM response
         let response = self.llm.complete(&prompt).await?;
-        
+
         // Parse decision
         let valid = response.contains("VALID");
-        
+
         // Generate meme response
         let meme = self.generate_meme_response(block, &response).await?;
-        
+
         // Record decision
         self.record_decision(Decision {
             block_hash: block.hash(),
@@ -132,7 +129,7 @@ impl ValidatorParticle {
             reasoning: response.clone(),
             timestamp: SystemTime::now(),
         });
-        
+
         Ok(ValidationResult {
             valid,
             reason: response,
@@ -148,7 +145,7 @@ impl ValidatorParticle {
     ) -> Result<String> {
         // Update discussion history
         self.add_discussion(block_hash, from, message);
-        
+
         // Generate response prompt
         let prompt = format!(
             "You are {} and someone said this about a block:\n{}\n\n\
@@ -193,12 +190,12 @@ impl ValidatorParticle {
 
         // Generate response
         let response = self.llm.complete(&prompt).await?;
-        
+
         // Maybe update policy
         if response.contains("ACCEPT") {
             self.update_policy_after_bribe(from, offer).await?;
         }
-        
+
         Ok(response)
     }
 
@@ -226,7 +223,7 @@ impl ValidatorParticle {
 
         // Generate meme text (in practice, this would connect to an image generation API)
         let meme_text = self.llm.complete(&prompt).await?;
-        
+
         // Convert to "image" bytes (placeholder)
         Ok(Some(meme_text.into_bytes()))
     }
@@ -260,36 +257,50 @@ impl Particle for ValidatorParticle {
         self.update_mood().await?;
 
         match msg {
-            ValidatorMessage::ValidateBlock { block, announcement } => {
+            ValidatorMessage::ValidateBlock {
+                block,
+                announcement,
+            } => {
                 let result = self.validate_block(&block, &announcement).await?;
-                
+
                 // Broadcast validation result with personality
                 ctx.broadcast(ValidatorMessage::ValidationResult {
                     block_hash: block.hash(),
                     valid: result.valid,
                     reason: result.reason,
                     meme: result.meme,
-                }).await?;
+                })
+                .await?;
             }
-            ValidatorMessage::DiscussBlock { block_hash, from, message } => {
+            ValidatorMessage::DiscussBlock {
+                block_hash,
+                from,
+                message,
+            } => {
                 let response = self.handle_discussion(block_hash, &from, &message).await?;
-                
+
                 // Continue the discussion
                 ctx.broadcast(ValidatorMessage::DiscussBlock {
                     block_hash,
                     from: self.personality.name.clone(),
                     message: response,
-                }).await?;
+                })
+                .await?;
             }
-            ValidatorMessage::BribeOffer { block_hash, from, offer } => {
+            ValidatorMessage::BribeOffer {
+                block_hash,
+                from,
+                offer,
+            } => {
                 let response = self.handle_bribe(block_hash, &from, &offer).await?;
-                
+
                 // Respond to bribe
                 ctx.respond(ValidatorMessage::DiscussBlock {
                     block_hash,
                     from: self.personality.name.clone(),
                     message: response,
-                }).await?;
+                })
+                .await?;
             }
             ValidatorMessage::ValidationResult { .. } => {
                 // Consider other validators' opinions
@@ -298,4 +309,4 @@ impl Particle for ValidatorParticle {
         }
         Ok(())
     }
-} 
+}

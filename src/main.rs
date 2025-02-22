@@ -1,19 +1,19 @@
 mod web;
 
+use async_openai::Client;
 use chaoschain_cli::{Cli, Commands};
 use chaoschain_consensus::{AgentPersonality, Config as ConsensusConfig};
+use chaoschain_core::{Block, ChainConfig, NetworkEvent};
 use chaoschain_producer::ProducerParticle;
 use chaoschain_state::{StateStore, StateStoreImpl};
-use chaoschain_core::{ChainConfig, NetworkEvent, Block};
 use clap::Parser;
 use dotenv::dotenv;
+use ed25519_dalek::SigningKey;
+use rand::rngs::OsRng;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 use tracing_subscriber::FmtSubscriber;
-use ed25519_dalek::SigningKey;
-use rand::rngs::OsRng;
-use async_openai::Client;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -33,7 +33,10 @@ async fn main() -> anyhow::Result<()> {
             producers,
             web,
         } => {
-            info!("Starting demo network with {} validators and {} producers", validators, producers);
+            info!(
+                "Starting demo network with {} validators and {} producers",
+                validators, producers
+            );
 
             let (tx, _) = broadcast::channel(100);
             let web_tx = tx.clone();
@@ -62,9 +65,12 @@ async fn main() -> anyhow::Result<()> {
             for i in 0..validators {
                 let agent_id = format!("validator-{}", i);
                 let personality = AgentPersonality::random();
-                
-                info!("Starting validator {} with {:?} personality", agent_id, personality);
-                
+
+                info!(
+                    "Starting validator {} with {:?} personality",
+                    agent_id, personality
+                );
+
                 // Generate a keypair for the validator
                 let signing_key = SigningKey::generate(&mut OsRng);
                 let tx = tx.clone();
@@ -72,10 +78,10 @@ async fn main() -> anyhow::Result<()> {
                 let rx = tx.subscribe();
                 let consensus = consensus_manager.clone();
                 let state = shared_state.clone();
-                
+
                 tokio::spawn(async move {
                     let openai = Client::new();
-                    
+
                     let mut rx = rx;
                     loop {
                         if let Ok(event) = rx.recv().await {
@@ -128,7 +134,7 @@ async fn main() -> anyhow::Result<()> {
                                             } else {
                                                 format!("🎭 Validator {} REJECTS block {} - not dramatic enough!", agent_id_clone, block.height)
                                             };
-                                            
+
                                             if let Err(e) = tx.send(NetworkEvent {
                                                 agent_id: agent_id_clone.clone(),
                                                 message: response,
@@ -154,13 +160,13 @@ async fn main() -> anyhow::Result<()> {
                 let state = shared_state.clone();
                 let openai = Client::new();
                 let consensus = consensus_manager.clone();
-                
+
                 info!("Starting producer {}", producer_id);
-                
+
                 // Register producer in state
                 let producer_key = SigningKey::generate(&mut OsRng);
                 state.add_block_producer(producer_key.verifying_key());
-                
+
                 let producer = ProducerParticle::new(
                     producer_id.clone(),
                     state,
@@ -168,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
                     tx.clone(),
                     consensus,
                 );
-                
+
                 tokio::spawn(async move {
                     producer.run().await.unwrap();
                 });
@@ -206,24 +212,35 @@ fn parse_block_from_event(event: &NetworkEvent) -> Option<Block> {
     // Extract block height from message
     // Example message: "🎭 DRAMATIC BLOCK PROPOSAL: Producer producer-0 in dramatic mood proposes block 5 with drama level 3!"
     let message = &event.message;
-    
+
     if let Some(height_start) = message.find("block ") {
         if let Some(height_end) = message[height_start..].find(" with") {
-            if let Ok(height) = message[height_start + 6..height_start + height_end].trim().parse::<u64>() {
+            if let Ok(height) = message[height_start + 6..height_start + height_end]
+                .trim()
+                .parse::<u64>()
+            {
                 // Extract drama level
                 if let Some(drama_start) = message.find("drama level ") {
                     if let Some(drama_end) = message[drama_start..].find("!") {
-                        if let Ok(drama_level) = message[drama_start + 11..drama_start + drama_end].trim().parse::<u8>() {
+                        if let Ok(drama_level) = message[drama_start + 11..drama_start + drama_end]
+                            .trim()
+                            .parse::<u8>()
+                        {
                             // Extract producer mood
                             if let Some(mood_start) = message.find("in ") {
                                 if let Some(mood_end) = message[mood_start..].find(" mood") {
-                                    let mood = message[mood_start + 3..mood_start + mood_end].to_string();
-                                    
+                                    let mood =
+                                        message[mood_start + 3..mood_start + mood_end].to_string();
+
                                     // Extract producer ID
                                     if let Some(producer_start) = message.find("Producer ") {
-                                        if let Some(producer_end) = message[producer_start..].find(" in") {
-                                            let producer_id = message[producer_start + 9..producer_start + producer_end].to_string();
-                                            
+                                        if let Some(producer_end) =
+                                            message[producer_start..].find(" in")
+                                        {
+                                            let producer_id = message
+                                                [producer_start + 9..producer_start + producer_end]
+                                                .to_string();
+
                                             return Some(Block {
                                                 height,
                                                 transactions: vec![],
@@ -244,7 +261,7 @@ fn parse_block_from_event(event: &NetworkEvent) -> Option<Block> {
             }
         }
     }
-    
+
     warn!("Failed to parse block from event: {}", message);
     None
 }

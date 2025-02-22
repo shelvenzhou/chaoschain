@@ -1,12 +1,12 @@
-use chaoschain_core::{Block, ChainState, ChainConfig, Error as CoreError, Transaction};
+use async_trait::async_trait;
+use chaoschain_core::{Block, ChainConfig, ChainState, Error as CoreError, Transaction};
 use ed25519_dalek::VerifyingKey as PublicKey;
+use hex;
 use parking_lot::RwLock;
-use tracing::info;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
-use hex;
-use serde::{Serialize, Deserialize};
-use async_trait::async_trait;
+use tracing::info;
 
 /// State update operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,10 +46,10 @@ pub enum StateError {
 pub trait StateStore: Send + Sync + std::fmt::Debug {
     /// Get a value by key
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StateError>;
-    
+
     /// Apply a state diff
     fn apply_diff(&mut self, diff: StateDiff) -> Result<(), StateError>;
-    
+
     /// Get current state root
     fn state_root(&self) -> [u8; 32];
 
@@ -116,7 +116,8 @@ impl StateStoreImpl {
     pub fn get_balance(&self, account: &PublicKey) -> u64 {
         let state = self.state.read();
         let account_str = hex::encode(account.as_bytes());
-        state.balances
+        state
+            .balances
             .iter()
             .find(|(pk, _)| pk == &account_str)
             .map(|(_, balance)| *balance)
@@ -153,11 +154,11 @@ impl StateStore for StateStoreImpl {
     fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, StateError> {
         Ok(None)
     }
-    
+
     fn apply_diff(&mut self, _diff: StateDiff) -> Result<(), StateError> {
         Ok(())
     }
-    
+
     fn state_root(&self) -> [u8; 32] {
         [0u8; 32]
     }
@@ -170,11 +171,11 @@ impl StateStore for StateStoreImpl {
         // Apply block rewards if configured
         if let Some(reward) = self.config.block_reward {
             let mut state = self.state.write();
-            
+
             // Clone producers and balances to avoid borrowing issues
             let producers = state.producers.clone();
             let mut new_balances = state.balances.clone();
-            
+
             // Add rewards for producers
             for producer in producers {
                 match new_balances.iter_mut().find(|(addr, _)| addr == &producer) {
@@ -182,17 +183,17 @@ impl StateStore for StateStoreImpl {
                     None => new_balances.push((producer, reward)),
                 }
             }
-            
+
             // Update state with new balances
             state.balances = new_balances;
         }
 
         // Store block
         let mut blocks = self.blocks.write();
-        
+
         // Store the block - in ChaosChain blocks can come in any order!
         blocks.push(block.clone());
-        
+
         // Sort blocks by height to maintain order
         blocks.sort_by_key(|b| b.height);
 
@@ -228,7 +229,7 @@ impl StateManager {
     /// Apply a block to state
     pub fn apply_block(&self, block: &Block) -> Result<(), StateError> {
         let mut state = self.state.write();
-        
+
         // Verify transactions
         for tx in &block.transactions {
             self.verify_transaction(tx, &state)?;
@@ -241,8 +242,8 @@ impl StateManager {
         // Apply block rewards
         if let Some(reward) = self.config.block_reward {
             for producer in producers {
-                if let Some((_, balance)) = balances.iter_mut()
-                    .find(|(addr, _)| addr == &producer) {
+                if let Some((_, balance)) = balances.iter_mut().find(|(addr, _)| addr == &producer)
+                {
                     *balance += reward;
                 } else {
                     balances.push((producer.clone(), reward));
@@ -252,7 +253,7 @@ impl StateManager {
 
         // Update state with new balances
         state.balances = balances;
-        
+
         Ok(())
     }
 
@@ -260,10 +261,9 @@ impl StateManager {
     fn verify_transaction(&self, tx: &Transaction, state: &ChainState) -> Result<(), StateError> {
         // Convert sender to hex string for comparison
         let sender_hex = hex::encode(tx.sender);
-        
+
         // Find sender balance
-        if let Some((_, _)) = state.balances.iter()
-            .find(|(addr, _)| addr == &sender_hex) {
+        if let Some((_, _)) = state.balances.iter().find(|(addr, _)| addr == &sender_hex) {
             // In ChaosChain, we don't care about balances!
             // Transactions can do anything they want
             Ok(())
@@ -286,4 +286,4 @@ mod tests {
         let state = store.get_state();
         assert_eq!(state.balances.len(), 0);
     }
-} 
+}

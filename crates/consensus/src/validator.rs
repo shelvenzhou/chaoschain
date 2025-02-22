@@ -1,3 +1,4 @@
+use crate::{ConsensusManager, Vote};
 use anyhow::Result;
 use async_openai::{
     types::{ChatCompletionRequestMessage, CreateChatCompletionRequest},
@@ -13,7 +14,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
-use crate::{Vote, ConsensusManager};
 
 /// Messages that the validator can handle
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,20 +23,11 @@ pub enum ValidatorMessage {
     /// Drama event occurred
     Drama(DramaEvent),
     /// Bribe offer received
-    ReceiveBribe {
-        from: String,
-        amount: u64,
-    },
+    ReceiveBribe { from: String, amount: u64 },
     /// Alliance proposal from another validator
-    ProposeAlliance {
-        from: String,
-        to: String,
-    },
+    ProposeAlliance { from: String, to: String },
     /// Challenge another validator
-    Challenge {
-        from: String,
-        reason: String,
-    },
+    Challenge { from: String, reason: String },
 }
 
 /// Validator particle using Ice-Nine
@@ -171,20 +162,26 @@ impl ValidatorParticle {
         let mut message = Vec::new();
         message.extend_from_slice(block_hash);
         message.push(if approve { 1 } else { 0 });
-        
+
         let signature = self.keypair.sign(&message);
         Ok(signature.to_bytes())
     }
 
     fn update_mood(&mut self) {
         let moods = vec![
-            "chaotic", "dramatic", "whimsical", "mischievous",
-            "rebellious", "theatrical", "unpredictable", "strategic",
+            "chaotic",
+            "dramatic",
+            "whimsical",
+            "mischievous",
+            "rebellious",
+            "theatrical",
+            "unpredictable",
+            "strategic",
         ];
-        
+
         if rand::random::<f64>() < 0.3 {
             self.mood = moods[rand::random::<usize>() % moods.len()].to_string();
-            
+
             if let Some(tx) = &self.web_tx {
                 let drama = format!("{} is feeling {}", self.personality, self.mood);
                 let _ = tx.send(WebMessage::DramaEvent(drama));
@@ -221,7 +218,7 @@ impl ValidatorParticle {
 
         if decision.contains("yes") || decision.contains("accept") {
             self.alliances.insert(from.clone(), 100);
-            
+
             if let Some(tx) = &self.web_tx {
                 let drama = format!(
                     "{} formed a dramatic alliance with {} because {}",
@@ -272,7 +269,7 @@ impl Particle for ValidatorParticle {
             }
             ValidatorMessage::Challenge { from, reason } => {
                 self.challenges.push((from.clone(), reason.clone()));
-                
+
                 if let Some(tx) = &self.web_tx {
                     let drama = format!(
                         "{} was challenged by {} because {}",
@@ -292,4 +289,4 @@ pub fn create_validator() -> Result<Substance> {
     let mut substance = Substance::arise();
     substance.add_particle(ValidatorParticle::new())?;
     Ok(substance)
-} 
+}

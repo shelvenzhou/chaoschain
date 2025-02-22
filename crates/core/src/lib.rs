@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
-use sha2::{Sha256, Digest};
 
 /// Core error types
 #[derive(Debug, Error)]
@@ -18,14 +18,8 @@ pub enum Error {
 pub enum NetworkMessage {
     NewBlock(Block),
     NewTransaction(Transaction),
-    Chat {
-        from: String,
-        message: String,
-    },
-    AgentReasoning {
-        agent: String,
-        reasoning: String,
-    },
+    Chat { from: String, message: String },
+    AgentReasoning { agent: String, reasoning: String },
 }
 
 /// A transaction in ChaosChain can be anything
@@ -71,7 +65,7 @@ impl Block {
     /// Calculate the block hash
     pub fn hash(&self) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        
+
         // Add block fields to hasher
         hasher.update(self.height.to_be_bytes());
         for tx in &self.transactions {
@@ -124,8 +118,8 @@ impl Default for ChainConfig {
 
 // Serialization helpers
 mod hex_serde {
-    use serde::{Deserialize, Deserializer, Serializer};
     use hex::{FromHex, ToHex};
+    use serde::{Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
     where
@@ -149,8 +143,8 @@ mod hex_serde {
 }
 
 mod base64_serde {
+    use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
     use serde::{Deserialize, Deserializer, Serializer};
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 
     pub fn serialize<S, const N: usize>(bytes: &[u8; N], serializer: S) -> Result<S::Ok, S::Error>
     where

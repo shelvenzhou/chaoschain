@@ -1,36 +1,26 @@
-use chaoschain_core::{Block, Transaction, NetworkMessage};
+use anyhow::Result;
+use chaoschain_core::{Block, NetworkMessage, Transaction};
+use futures::StreamExt;
 use libp2p::{
     core::transport::Transport,
     gossipsub::{
-        self,
-        Gossipsub,
-        GossipsubConfigBuilder,
-        GossipsubMessage,
-        MessageAuthenticity,
-        ValidationMode,
-        Topic as GossipsubTopic,
-        GossipsubEvent,
-        IdentTopic,
+        self, Gossipsub, GossipsubConfigBuilder, GossipsubEvent, GossipsubMessage, IdentTopic,
+        MessageAuthenticity, Topic as GossipsubTopic, ValidationMode,
     },
     identity::Keypair,
     mdns::{Mdns, MdnsEvent},
-    swarm::{NetworkBehaviour, SwarmEvent},
-    Swarm,
-    PeerId,
-    tcp,
     noise,
-    yamux,
+    swarm::{NetworkBehaviour, SwarmEvent},
+    tcp, yamux, PeerId, Swarm,
 };
 use libp2p_swarm_derive::NetworkBehaviour;
 use serde::{Deserialize, Serialize};
-use tracing::info;
-use anyhow::Result;
-use futures::StreamExt;
-use thiserror::Error;
-use std::error::Error as StdError;
-use tokio::sync::mpsc;
-use std::time::Duration;
 use sha2::Sha256;
+use std::error::Error as StdError;
+use std::time::Duration;
+use thiserror::Error;
+use tokio::sync::mpsc;
+use tracing::info;
 
 /// P2P message types for agent communication
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,19 +178,14 @@ impl Network {
             .build()
             .map_err(|msg| anyhow::anyhow!("Failed to build gossipsub config: {msg}"))?;
 
-        let gossipsub = Gossipsub::new(
-            MessageAuthenticity::Anonymous,
-            gossipsub_config,
-        ).map_err(|msg| anyhow::anyhow!("Failed to create gossipsub: {msg}"))?;
+        let gossipsub = Gossipsub::new(MessageAuthenticity::Anonymous, gossipsub_config)
+            .map_err(|msg| anyhow::anyhow!("Failed to create gossipsub: {msg}"))?;
 
         // Create MDNS
         let mdns = Mdns::new(Default::default()).await?;
 
         // Create behaviour
-        let behaviour = ChainNetworkBehaviour {
-            gossipsub,
-            mdns,
-        };
+        let behaviour = ChainNetworkBehaviour { gossipsub, mdns };
 
         // Create swarm
         let swarm = Swarm::new(transport, behaviour, peer_id);
@@ -214,13 +199,22 @@ impl Network {
         self.swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
 
         // Subscribe to topics
-        self.swarm.behaviour_mut().gossipsub.subscribe(&self.topics.blocks)?;
-        self.swarm.behaviour_mut().gossipsub.subscribe(&self.topics.transactions)?;
-        self.swarm.behaviour_mut().gossipsub.subscribe(&self.topics.chat)?;
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&self.topics.blocks)?;
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&self.topics.transactions)?;
+        self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&self.topics.chat)?;
 
         loop {
             match self.swarm.next().await.expect("Swarm stream is infinite") {
-                SwarmEvent::Behaviour(OutEvent::Gossipsub(GossipsubEvent::Message { 
+                SwarmEvent::Behaviour(OutEvent::Gossipsub(GossipsubEvent::Message {
                     message: GossipsubMessage { data, .. },
                     ..
                 })) => {
@@ -247,25 +241,25 @@ impl Network {
 
     pub async fn broadcast(&mut self, message: NetworkMessage) -> Result<()> {
         let data = serde_json::to_vec(&message)?;
-        
+
         match message {
             NetworkMessage::NewBlock(_) => {
-                self.swarm.behaviour_mut().gossipsub.publish(
-                    self.topics.blocks.clone(),
-                    data,
-                )?;
+                self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(self.topics.blocks.clone(), data)?;
             }
             NetworkMessage::NewTransaction(_) => {
-                self.swarm.behaviour_mut().gossipsub.publish(
-                    self.topics.transactions.clone(),
-                    data,
-                )?;
+                self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(self.topics.transactions.clone(), data)?;
             }
             NetworkMessage::Chat { .. } | NetworkMessage::AgentReasoning { .. } => {
-                self.swarm.behaviour_mut().gossipsub.publish(
-                    self.topics.chat.clone(),
-                    data,
-                )?;
+                self.swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(self.topics.chat.clone(), data)?;
             }
         }
 

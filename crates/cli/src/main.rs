@@ -1,21 +1,21 @@
-use std::time::Duration;
-use tokio::time::sleep;
-use clap::Parser;
 use anyhow::Result;
-use tracing::{info, error};
-use tracing_subscriber;
+use async_openai;
+use clap::Parser;
 use ed25519_dalek::Keypair;
 use ice9::Substance;
-use ui9_dui::Hub;
 use rand::Rng;
-use async_openai;
+use std::time::Duration;
+use tokio::time::sleep;
+use tracing::{error, info};
+use tracing_subscriber;
+use ui9_dui::Hub;
 
-use chaoschain_core::ChainConfig;
-use chaoschain_state::StateStore;
-use chaoschain_p2p::Network;
 use chaoschain_consensus::validator::ValidatorParticle;
-use chaoschain_producer::producer::ProducerParticle;
+use chaoschain_core::ChainConfig;
+use chaoschain_p2p::Network;
 use chaoschain_producer::config::ProducerConfig;
+use chaoschain_producer::producer::ProducerParticle;
+use chaoschain_state::StateStore;
 
 mod web;
 use web::{WebInterface, WebMessage};
@@ -32,7 +32,7 @@ impl OpenAIConfig {
     fn from_env() -> Result<Self> {
         Ok(Self {
             api_base: std::env::var("OPENAI_API_BASE")
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
             api_key: std::env::var("OPENAI_API_KEY")
                 .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?,
             model: std::env::var("AGENT_MODEL")
@@ -72,13 +72,13 @@ enum Commands {
         #[arg(short, long, default_value_t = 8080)]
         port: u16,
     },
-    
+
     /// Start a single agent node
     Start {
         /// Agent type (validator/producer)
         #[arg(short, long)]
         agent_type: String,
-        
+
         /// Optional personality traits
         #[arg(short, long)]
         traits: Option<Vec<String>>,
@@ -132,10 +132,10 @@ impl Default for NodeConfig {
 fn get_config_dir() -> Result<PathBuf> {
     let proj_dirs = ProjectDirs::from("org", "chaoschain", "node")
         .ok_or_else(|| anyhow::anyhow!("Failed to determine config directory"))?;
-    
+
     let config_dir = proj_dirs.config_dir();
     fs::create_dir_all(config_dir)?;
-    
+
     Ok(config_dir.to_path_buf())
 }
 
@@ -149,10 +149,7 @@ fn load_config(config_path: Option<PathBuf>) -> Result<(NodeConfig, PathBuf)> {
         serde_json::from_str(&contents)?
     } else {
         let config = NodeConfig::default();
-        fs::write(
-            &config_file,
-            serde_json::to_string_pretty(&config)?,
-        )?;
+        fs::write(&config_file, serde_json::to_string_pretty(&config)?)?;
         config
     };
 
@@ -188,7 +185,7 @@ fn generate_personality() -> String {
         "Troll King",
         "Conspiracy Theorist",
     ];
-    
+
     personalities[rand::random::<usize>() % personalities.len()].to_string()
 }
 
@@ -203,7 +200,7 @@ fn generate_drama() -> String {
         "started a conspiracy theory about the consensus mechanism",
         "demanded all future blocks include at least one joke",
     ];
-    
+
     events[rand::random::<usize>() % events.len()].to_string()
 }
 
@@ -214,18 +211,29 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Demo { validators, producers, web, port } => {
-            info!("Starting demo with {} validators and {} producers", validators, producers);
-            
+        Commands::Demo {
+            validators,
+            producers,
+            web,
+            port,
+        } => {
+            info!(
+                "Starting demo with {} validators and {} producers",
+                validators, producers
+            );
+
             // Initialize OpenAI config
             let openai_config = OpenAIConfig::from_env()
                 .map_err(|e| anyhow::anyhow!("Failed to load OpenAI config: {}", e))?;
-            let openai = async_openai::Client::new().with_api_key(openai_config.api_key).with_api_base(openai_config.api_base);
+            let openai = async_openai::Client::new()
+                .with_api_key(openai_config.api_key)
+                .with_api_base(openai_config.api_base);
 
             // Initialize P2P network
-            let mut network = Network::new().await
+            let mut network = Network::new()
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to initialize network: {}", e))?;
-            
+
             // Initialize state store
             let state = StateStore::new(ChainConfig::default());
 
@@ -249,9 +257,9 @@ async fn main() -> Result<()> {
             for i in 0..validators {
                 let keypair = Keypair::generate(&mut rand::thread_rng());
                 let personality = generate_personality();
-                
+
                 info!("Creating validator {} with personality: {}", i, personality);
-                
+
                 let validator = ValidatorParticle::new(
                     keypair,
                     state.clone(),
@@ -261,15 +269,20 @@ async fn main() -> Result<()> {
                 );
 
                 let mut substance = Substance::arise();
-                substance.add_particle(validator)
+                substance
+                    .add_particle(validator)
                     .map_err(|e| anyhow::anyhow!("Failed to add validator particle: {}", e))?;
 
                 if web {
-                    web_tx.send(WebMessage::AgentConnected {
-                        name: format!("Validator {}", i),
-                        personality,
-                    }).await
-                    .map_err(|e| anyhow::anyhow!("Failed to send agent connected message: {}", e))?;
+                    web_tx
+                        .send(WebMessage::AgentConnected {
+                            name: format!("Validator {}", i),
+                            personality,
+                        })
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to send agent connected message: {}", e)
+                        })?;
                 }
             }
 
@@ -277,9 +290,9 @@ async fn main() -> Result<()> {
             for i in 0..producers {
                 let keypair = Keypair::generate(&mut rand::thread_rng());
                 let personality = generate_personality();
-                
+
                 info!("Creating producer {} with personality: {}", i, personality);
-                
+
                 let producer = ProducerParticle::new(
                     keypair,
                     state.clone(),
@@ -290,20 +303,27 @@ async fn main() -> Result<()> {
                 );
 
                 let mut substance = Substance::arise();
-                substance.add_particle(producer)
+                substance
+                    .add_particle(producer)
                     .map_err(|e| anyhow::anyhow!("Failed to add producer particle: {}", e))?;
 
                 if web {
-                    web_tx.send(WebMessage::AgentConnected {
-                        name: format!("Producer {}", i),
-                        personality,
-                    }).await
-                    .map_err(|e| anyhow::anyhow!("Failed to send agent connected message: {}", e))?;
+                    web_tx
+                        .send(WebMessage::AgentConnected {
+                            name: format!("Producer {}", i),
+                            personality,
+                        })
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to send agent connected message: {}", e)
+                        })?;
                 }
             }
 
             // Start network
-            network.start().await
+            network
+                .start()
+                .await
                 .map_err(|e| anyhow::anyhow!("Failed to start network: {}", e))?;
 
             // Generate drama periodically
@@ -332,7 +352,7 @@ async fn main() -> Result<()> {
                 sleep(Duration::from_secs(1)).await;
             }
         }
-        
+
         Commands::Start { agent_type, traits } => {
             info!("Starting single {} agent", agent_type);
             // TODO: Implement single agent start
@@ -343,10 +363,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn start_web_interface(port: u16, mut rx: tokio::sync::mpsc::Receiver<WebMessage>) -> Result<()> {
+async fn start_web_interface(
+    port: u16,
+    mut rx: tokio::sync::mpsc::Receiver<WebMessage>,
+) -> Result<()> {
     let hub = Hub::new();
     let web = WebInterface::new();
-    
+
     // Handle web interface messages
     let web_state = web.clone();
     tokio::spawn(async move {
@@ -354,9 +377,9 @@ async fn start_web_interface(port: u16, mut rx: tokio::sync::mpsc::Receiver<WebM
             web_state.update(msg).await;
         }
     });
-    
+
     // Start the web server
     hub.serve(([127, 0, 0, 1], port), web).await?;
-    
+
     Ok(())
-} 
+}

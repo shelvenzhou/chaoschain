@@ -1,28 +1,26 @@
+use anyhow::Result;
+use async_openai::{
+    config::OpenAIConfig,
+    types::{
+        ChatCompletionRequestMessage, ChatCompletionRequestSystemMessage,
+        CreateChatCompletionRequest, Role,
+    },
+    Client,
+};
+use async_trait::async_trait;
+use chaoschain_consensus::ConsensusManager;
 use chaoschain_core::{Block, NetworkEvent, Transaction};
 use chaoschain_p2p::Message as P2PMessage;
 use chaoschain_state::{StateStore, StateStoreImpl};
-use async_openai::{
-    Client,
-    config::OpenAIConfig,
-    types::{
-        CreateChatCompletionRequest,
-        ChatCompletionRequestMessage,
-        ChatCompletionRequestSystemMessage,
-        Role,
-    },
-};
-use serde::{Deserialize, Serialize};
-use tracing::info;
-use tokio::sync::mpsc;
-use anyhow::Result;
-use async_trait::async_trait;
-use thiserror::Error;
-use std::time::Duration;
-use tokio::sync::broadcast;
-use std::sync::Arc;
-use ed25519_dalek::{SigningKey, Signer};
+use ed25519_dalek::{Signer, SigningKey};
 use rand::rngs::OsRng;
-use chaoschain_consensus::ConsensusManager;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
+use thiserror::Error;
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum WebMessage {
@@ -34,10 +32,10 @@ pub enum WebMessage {
 /// Block production style based on mood
 #[derive(Debug, Clone)]
 enum ProductionStyle {
-    Chaotic,     // Random transaction selection
-    Dramatic,    // Prioritize dramatic transactions
-    Strategic,   // Try to please specific validators
-    Whimsical,  // Randomly switch between styles
+    Chaotic,   // Random transaction selection
+    Dramatic,  // Prioritize dramatic transactions
+    Strategic, // Try to please specific validators
+    Whimsical, // Randomly switch between styles
 }
 
 /// Messages that the producer particle can handle
@@ -132,10 +130,10 @@ impl ProducerParticle {
             // Create a new block
             let block = Block {
                 height: block_height,
-                transactions: vec![], // TODO: Add mempool transactions
+                transactions: vec![],    // TODO: Add mempool transactions
                 proposer_sig: [0u8; 64], // TODO: Sign block
-                parent_hash: [0u8; 32], // Genesis block for now
-                state_root: [0u8; 32], // Empty state for now
+                parent_hash: [0u8; 32],  // Genesis block for now
+                state_root: [0u8; 32],   // Empty state for now
                 drama_level: rand::random::<u8>() % 10,
                 producer_mood: self.get_mood().await?,
                 producer_id: self.id.clone(),
@@ -165,8 +163,14 @@ impl ProducerParticle {
 
     async fn get_mood(&self) -> Result<String> {
         let moods = vec![
-            "dramatic", "chaotic", "whimsical", "mischievous",
-            "rebellious", "theatrical", "unpredictable", "strategic",
+            "dramatic",
+            "chaotic",
+            "whimsical",
+            "mischievous",
+            "rebellious",
+            "theatrical",
+            "unpredictable",
+            "strategic",
         ];
         Ok(moods[rand::random::<usize>() % moods.len()].to_string())
     }
@@ -200,7 +204,7 @@ impl Producer {
     ) -> Self {
         // Generate a new keypair for signing
         let signing_key = SigningKey::generate(&mut OsRng);
-        
+
         Self {
             id,
             state,
@@ -222,22 +226,29 @@ impl Producer {
         let request = CreateChatCompletionRequest {
             model: "gpt-4".to_string(),
             messages: vec![system_message],
-            temperature: Some(0.9),  // Higher temperature for more creative responses
+            temperature: Some(0.9), // Higher temperature for more creative responses
             max_tokens: Some(200),
             presence_penalty: Some(0.7),  // Encourage novel responses
-            frequency_penalty: Some(0.7),  // Discourage repetition
+            frequency_penalty: Some(0.7), // Discourage repetition
             ..Default::default()
         };
 
-        let response = self.openai.chat().create(request).await.map_err(|e| Error::Other(e.to_string()))?;
-        let message = response.choices.first()
+        let response = self
+            .openai
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| Error::Other(e.to_string()))?;
+        let message = response
+            .choices
+            .first()
             .and_then(|choice| choice.message.content.clone())
             .ok_or_else(|| Error::Other("No response from OpenAI".to_string()))?;
 
         // Create a transaction with proper signature
         let nonce: u64 = 0; // In a real implementation, this would be tracked
         let payload = message.clone().into_bytes();
-        
+
         // Sign the transaction
         let mut to_sign = nonce.to_be_bytes().to_vec();
         to_sign.extend_from_slice(&payload);
@@ -252,13 +263,13 @@ impl Producer {
 
         // Get the current block height from state
         let height = self.state.get_block_height();
-        
+
         // Create the block
         let mut block = Block {
             parent_hash: [0u8; 32], // This should come from the latest block
             height,
             transactions: vec![transaction],
-            state_root: [0u8; 32], // This will be filled in by consensus
+            state_root: [0u8; 32],   // This will be filled in by consensus
             proposer_sig: [0u8; 64], // We'll fill this in below
             drama_level: rand::random::<u8>() % 10, // Random drama level between 0-9
             producer_mood: "dramatic".to_string(), // Default mood for generated blocks
@@ -272,8 +283,8 @@ impl Producer {
         // Send a dramatic block proposal event
         self.tx.send(NetworkEvent {
             agent_id: self.id.clone(),
-            message: format!("🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer {} declares: {}\n\nWho dares to validate this masterpiece at height {}? 🎪", 
-                self.id, 
+            message: format!("🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer {} declares: {}\n\nWho dares to validate this masterpiece at height {}? 🎪",
+                self.id,
                 message,
                 block.height
             ),
@@ -281,4 +292,4 @@ impl Producer {
 
         Ok(block)
     }
-} 
+}

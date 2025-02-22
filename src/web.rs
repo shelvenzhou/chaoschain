@@ -1,24 +1,25 @@
+use anyhow::Result;
 use axum::{
-    routing::get,
-    Router, Json, extract::State,
+    extract::State,
     response::sse::{Event, Sse},
+    routing::get,
+    Json, Router,
 };
+use chaoschain_core::{Block, NetworkEvent};
+use chaoschain_state::StateStoreImpl;
+use chrono;
 use futures::stream::Stream;
 use futures::StreamExt;
+use hex;
 use serde::{Deserialize, Serialize};
-use std::{sync::Arc, net::SocketAddr};
+use serde_json;
+use std::collections::HashMap;
+use std::sync::RwLock;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
-use tracing::info;
-use anyhow::Result;
 use tower_http::services::ServeDir;
-use serde_json;
-use chaoschain_core::{NetworkEvent, Block};
-use chaoschain_state::StateStoreImpl;
-use std::sync::RwLock;
-use hex;
-use std::collections::HashMap;
-use chrono;
+use tracing::info;
 
 /// Web server state
 pub struct AppState {
@@ -60,7 +61,10 @@ pub struct BlockInfo {
 }
 
 /// Start the web server
-pub async fn start_web_server(tx: broadcast::Sender<NetworkEvent>, state: Arc<StateStoreImpl>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_web_server(
+    tx: broadcast::Sender<NetworkEvent>,
+    state: Arc<StateStoreImpl>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let app_state = Arc::new(AppState {
         tx,
         state: state.clone(),
@@ -80,14 +84,12 @@ pub async fn start_web_server(tx: broadcast::Sender<NetworkEvent>, state: Arc<St
 }
 
 /// Get network status including latest blocks
-async fn get_network_status(
-    State(state): State<Arc<AppState>>,
-) -> Json<NetworkStatus> {
+async fn get_network_status(State(state): State<Arc<AppState>>) -> Json<NetworkStatus> {
     let state_guard = state.state.clone();
-    
+
     // Get chain state
     let chain_state = state_guard.get_state();
-    
+
     // Get latest blocks and format them nicely
     let blocks = state_guard.get_latest_blocks(10);
     let latest_blocks = blocks
@@ -106,7 +108,7 @@ async fn get_network_status(
 
     // Get latest block height
     let latest_block = state_guard.get_block_height();
-    
+
     Json(NetworkStatus {
         validator_count: 4, // We know we started with 4 validators
         producer_count: chain_state.producers.len() as u32,
@@ -147,6 +149,6 @@ async fn events_handler(
         };
         Ok(event)
     });
-    
+
     Sse::new(stream)
-} 
+}

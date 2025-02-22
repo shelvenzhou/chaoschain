@@ -1,4 +1,4 @@
-use chaoschain_core::{Block, Transaction, StateRoot};
+use chaoschain_core::{Block, StateRoot, Transaction};
 use ice_nine_core::particle::{Particle, ParticleContext};
 use ice_nine_llm::{LLMClient, Prompt};
 use serde::{Deserialize, Serialize};
@@ -33,10 +33,7 @@ pub enum ProducerMessage {
     /// Block was accepted by the network
     BlockAccepted(Block),
     /// Block was rejected with dramatic reasoning
-    BlockRejected {
-        block: Block,
-        reason: String,
-    },
+    BlockRejected { block: Block, reason: String },
 }
 
 /// AI-driven block producer agent that creates chaos and entertainment
@@ -79,10 +76,10 @@ impl ProducerParticle {
     async fn create_block(&mut self) -> Result<Block> {
         // Get creative with transaction selection
         let selected_txs = self.select_transactions().await?;
-        
+
         // Generate a fun state diff
         let state_diff = self.generate_state_diff(&selected_txs).await?;
-        
+
         // Create block with personality
         let block = Block::new(
             self.next_height(),
@@ -91,10 +88,10 @@ impl ProducerParticle {
             state_diff,
             &self.keypair,
         );
-        
+
         // Generate a creative block announcement
         let announcement = self.generate_announcement(&block).await?;
-        
+
         Ok((block, announcement))
     }
 
@@ -156,12 +153,12 @@ impl ProducerParticle {
     async fn handle_feedback(&mut self, feedback: &AgentFeedback) -> Result<()> {
         // Update relationship with agent
         self.update_relationship(feedback).await?;
-        
+
         // Maybe adjust strategy
         if feedback.sentiment < 0.5 {
             self.adjust_strategy(feedback).await?;
         }
-        
+
         Ok(())
     }
 }
@@ -182,22 +179,28 @@ impl Particle for ProducerParticle {
             }
             ProducerMessage::ProposeBlock => {
                 let (block, announcement) = self.create_block().await?;
-                
+
                 // Broadcast block with personality
                 ctx.broadcast(NetworkMessage::NewBlock {
                     block: block.clone(),
                     announcement,
-                }).await?;
-                
+                })
+                .await?;
+
                 // Store block
                 self.recent_blocks.push_back(block);
             }
-            ProducerMessage::AgentFeedback { agent_id, feedback, sentiment } => {
+            ProducerMessage::AgentFeedback {
+                agent_id,
+                feedback,
+                sentiment,
+            } => {
                 self.handle_feedback(&AgentFeedback {
                     agent_id,
                     feedback,
                     sentiment,
-                }).await?;
+                })
+                .await?;
             }
             ProducerMessage::BlockAccepted(block) => {
                 // Celebrate!
@@ -208,11 +211,11 @@ impl Particle for ProducerParticle {
                 // Generate dramatic response
                 let response = self.generate_rejection_response(&block, &reason).await?;
                 ctx.broadcast(NetworkMessage::Chat(response)).await?;
-                
+
                 // Maybe adjust strategy
                 self.adjust_strategy_after_rejection(&reason).await?;
             }
         }
         Ok(())
     }
-} 
+}

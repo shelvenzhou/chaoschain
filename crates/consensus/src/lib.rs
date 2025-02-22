@@ -1,12 +1,15 @@
+use anyhow::Result;
+use async_openai::{
+    types::{ChatCompletionRequestMessage, Role},
+    Client,
+};
 use chaoschain_core::{Block, Error as CoreError, Transaction};
 use chaoschain_p2p::{AgentMessage, Message as P2PMessage};
-use async_openai::{Client, types::{ChatCompletionRequestMessage, Role}};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as, hex::Hex};
+use serde_with::{hex::Hex, serde_as};
 use thiserror::Error;
 use tracing::{debug, info, warn};
-use anyhow::Result;
-use rand::Rng;
 
 mod manager;
 pub use manager::ConsensusManager;
@@ -133,4 +136,4 @@ pub struct Vote {
 /// Create a new consensus manager with the given configuration
 pub fn create_consensus_manager(total_stake: u64, config: Config) -> ConsensusManager {
     ConsensusManager::new(total_stake, config.finality_threshold)
-} 
+}
