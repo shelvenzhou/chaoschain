@@ -1,10 +1,11 @@
 mod web;
 
-use async_openai::Client;
+use anyhow::Result;
+use async_openai::config::OpenAIConfig as RawConfig;
 use chaoschain_cli::{Cli, Commands};
 use chaoschain_consensus::{AgentPersonality, Config as ConsensusConfig};
 use chaoschain_core::{Block, ChainConfig, NetworkEvent};
-use chaoschain_producer::ProducerParticle;
+use chaoschain_producer::Producer;
 use chaoschain_state::{StateStore, StateStoreImpl};
 use clap::Parser;
 use dotenv::dotenv;
@@ -14,6 +15,37 @@ use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
 use tracing_subscriber::FmtSubscriber;
+
+/// OpenAI configuration for agent personalities
+struct OpenAIConfig {
+    api_base: String,
+    api_key: String,
+    model: String,
+    temperature: f32,
+}
+
+impl OpenAIConfig {
+    fn from_env() -> Result<Self> {
+        Ok(Self {
+            api_base: std::env::var("OPENAI_API_BASE")
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
+            api_key: std::env::var("OPENAI_API_KEY")
+                .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?,
+            model: std::env::var("AGENT_MODEL")
+                .unwrap_or_else(|_| "gpt-4-turbo-preview".to_string()),
+            temperature: std::env::var("TEMPERATURE")
+                .unwrap_or_else(|_| "0.9".to_string())
+                .parse()
+                .unwrap_or(0.9),
+        })
+    }
+
+    pub fn extract(&self) -> RawConfig {
+        RawConfig::default()
+            .with_api_key(&self.api_key)
+            .with_api_base(&self.api_base)
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -38,7 +70,11 @@ async fn main() -> anyhow::Result<()> {
                 validators, producers
             );
 
-            let (tx, _) = broadcast::channel(100);
+            let openai_config = OpenAIConfig::from_env()
+                .map_err(|e| anyhow::anyhow!("Failed to load OpenAI config: {}", e))?;
+            let openai = async_openai::Client::with_config(openai_config.extract());
+
+            let (tx, _) = broadcast::channel(1000);
             let web_tx = tx.clone();
 
             // Create consensus manager
@@ -80,8 +116,6 @@ async fn main() -> anyhow::Result<()> {
                 let state = shared_state.clone();
 
                 tokio::spawn(async move {
-                    let openai = Client::new();
-
                     let mut rx = rx;
                     loop {
                         if let Ok(event) = rx.recv().await {
@@ -158,25 +192,24 @@ async fn main() -> anyhow::Result<()> {
             for i in 0..producers {
                 let producer_id = format!("producer-{}", i);
                 let state = shared_state.clone();
-                let openai = Client::new();
                 let consensus = consensus_manager.clone();
 
                 info!("Starting producer {}", producer_id);
-
-                // Register producer in state
-                let producer_key = SigningKey::generate(&mut OsRng);
-                state.add_block_producer(producer_key.verifying_key());
-
-                let producer = ProducerParticle::new(
+                let producer = Producer::new(
                     producer_id.clone(),
-                    state,
-                    openai,
+                    state.clone(),
+                    openai.clone(),
                     tx.clone(),
                     consensus,
                 );
 
+                // Register producer in state
+                state.add_block_producer(producer.signing_key.verifying_key());
+
                 tokio::spawn(async move {
-                    producer.run().await.unwrap();
+                    loop {
+                        let _ = producer.generate_block().await.unwrap();
+                    }
                 });
             }
 

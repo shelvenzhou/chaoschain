@@ -189,18 +189,20 @@ pub fn create_producer(
 
 pub struct Producer {
     pub id: String,
-    pub state: Box<dyn StateStore + Send + Sync>,
+    pub state: Arc<dyn StateStore + Send + Sync>,
     pub openai: Client<OpenAIConfig>,
     pub tx: broadcast::Sender<NetworkEvent>,
-    signing_key: SigningKey,
+    pub signing_key: SigningKey,
+    consensus: Arc<ConsensusManager>,
 }
 
 impl Producer {
     pub fn new(
         id: String,
-        state: Box<dyn StateStore + Send + Sync>,
+        state: Arc<dyn StateStore + Send + Sync>,
         openai: Client<OpenAIConfig>,
         tx: broadcast::Sender<NetworkEvent>,
+        consensus: Arc<ConsensusManager>,
     ) -> Self {
         // Generate a new keypair for signing
         let signing_key = SigningKey::generate(&mut OsRng);
@@ -211,6 +213,7 @@ impl Producer {
             openai,
             tx,
             signing_key,
+            consensus,
         }
     }
 
@@ -279,6 +282,11 @@ impl Producer {
         // Sign the block
         let block_bytes = serde_json::to_vec(&block).map_err(|e| Error::Other(e.to_string()))?;
         block.proposer_sig = self.signing_key.sign(&block_bytes).to_bytes();
+
+        // Start new voting round
+        self.consensus.start_voting_round(block.clone()).await;
+
+        info!("{} sends tx", self.id);
 
         // Send a dramatic block proposal event
         self.tx.send(NetworkEvent {
