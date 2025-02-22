@@ -22,6 +22,7 @@ use web::{WebInterface, WebMessage};
 
 /// OpenAI configuration for agent personalities
 struct OpenAIConfig {
+    api_base: String,
     api_key: String,
     model: String,
     temperature: f32,
@@ -30,6 +31,8 @@ struct OpenAIConfig {
 impl OpenAIConfig {
     fn from_env() -> Result<Self> {
         Ok(Self {
+            api_base: std::env::var("OPENAI_API_BASE")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
             api_key: std::env::var("OPENAI_API_KEY")
                 .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?,
             model: std::env::var("AGENT_MODEL")
@@ -217,7 +220,7 @@ async fn main() -> Result<()> {
             // Initialize OpenAI config
             let openai_config = OpenAIConfig::from_env()
                 .map_err(|e| anyhow::anyhow!("Failed to load OpenAI config: {}", e))?;
-            let openai = async_openai::Client::new().with_api_key(openai_config.api_key);
+            let openai = async_openai::Client::new().with_api_key(openai_config.api_key).with_api_base(openai_config.api_base);
 
             // Initialize P2P network
             let mut network = Network::new().await
