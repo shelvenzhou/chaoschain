@@ -14,6 +14,8 @@ use tracing::{debug, info, warn};
 mod manager;
 pub use manager::ConsensusManager;
 
+pub mod validator;
+
 /// Agent personality types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentPersonality {

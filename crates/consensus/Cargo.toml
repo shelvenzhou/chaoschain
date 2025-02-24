@@ -10,6 +10,8 @@ chaoschain-core = { path = "../core" }
 chaoschain-p2p = { path = "../p2p" }
 chaoschain-state = { path = "../state" }
 
+hex = "0.4"
+
 # Async runtime
 tokio = { workspace = true }
 
