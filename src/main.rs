@@ -13,6 +13,7 @@ use dotenv::dotenv;
 use ed25519_dalek::SigningKey;
 use glob::glob;
 use rand::rngs::OsRng;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -180,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
                             // React to block proposals based on personality
                             if event.message.contains("DRAMATIC BLOCK PROPOSAL") {
                                 // Parse block from event message
-                                if let Some(block) = consensus.get_current_block().await {
+                                if let Some(mut block) = consensus.get_current_block().await {
                                     // Submit vote with stake
                                     match validator.validate_block(block.clone()).await {
                                         Ok((true, decision)) => {
@@ -204,6 +205,18 @@ async fn main() -> anyhow::Result<()> {
                                             // Store block in state if approved
                                             if approved {
                                                 info!("Storing block {} in state", block.height);
+
+                                                // append vote details to block
+                                                let votes = consensus.get_votes().await;
+                                                let block_votes: HashMap<String, (bool, String)> =
+                                                    votes
+                                                        .into_iter()
+                                                        .map(|(agent_id, vote)| {
+                                                            (agent_id, (vote.approve, vote.reason))
+                                                        })
+                                                        .collect();
+                                                block.votes = block_votes;
+
                                                 if let Err(e) = state.apply_block(&block) {
                                                     warn!("Failed to store block: {}", e);
                                                 }

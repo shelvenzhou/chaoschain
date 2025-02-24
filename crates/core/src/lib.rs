@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -57,6 +59,8 @@ pub struct Block {
     pub message: String,
     /// ID of the producer who created this block
     pub producer_id: String,
+    /// Vote details
+    pub votes: HashMap<String, (bool, String)>,
 }
 
 impl Block {

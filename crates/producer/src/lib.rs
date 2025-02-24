@@ -15,8 +15,8 @@ use chaoschain_state::{StateStore, StateStoreImpl};
 use ed25519_dalek::{ed25519::signature::rand_core::block, Signer, SigningKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use std::time::Duration;
+use std::{collections::HashMap, sync::Arc};
 use thiserror::Error;
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
@@ -131,13 +131,12 @@ impl Producer {
     }
 
     pub async fn generate_block(&self) -> Result<Block, Error> {
-        let system_message = ChatCompletionRequestMessage::System(
-            ChatCompletionRequestSystemMessage {
+        let system_message =
+            ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
                 content: self.system_prompt.clone(),
                 role: Role::System,
                 name: None,
-            }
-        );
+            });
 
         let request = CreateChatCompletionRequest {
             model: "gpt-4o".to_string(),
@@ -194,6 +193,7 @@ impl Producer {
             proposer_sig: [0u8; 64], // We'll fill this in below
             message: message.clone(),
             producer_id: self.id.clone(),
+            votes: HashMap::new(), // This will be filled in by consensus
         };
 
         // Sign the block
