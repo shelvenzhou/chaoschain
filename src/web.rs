@@ -96,11 +96,10 @@ async fn get_network_status(State(state): State<Arc<AppState>>) -> Json<NetworkS
         .iter()
         .map(|block| {
             format!(
-                "Block #{} - Producer: {}, Mood: {}, Drama Level: {}, Transactions: {}",
+                "Block #{} - Producer: {}, Message: {}, Transactions: {}",
                 block.height,
                 block.producer_id,
-                block.producer_mood,
-                block.drama_level,
+                block.message,
                 block.transactions.len()
             )
         })

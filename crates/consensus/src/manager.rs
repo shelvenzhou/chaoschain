@@ -1,16 +1,41 @@
 use crate::{Error, Vote};
 use chaoschain_core::Block;
+use hex;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
+#[derive(Debug, Clone, PartialEq)]
+enum VotingState {
+    Inactive,
+    Active,
+    Completed,
+}
+
+#[derive(Debug)]
+struct ConsensusState {
+    /// Current block being voted on
+    current_block: Option<Block>,
+    /// Votes for the current block
+    votes: HashMap<String, Vote>,
+    /// Current voting state
+    voting_state: VotingState,
+}
+
+impl ConsensusState {
+    fn new() -> Self {
+        Self {
+            current_block: None,
+            votes: HashMap::new(),
+            voting_state: VotingState::Inactive,
+        }
+    }
+}
+
 /// Tracks votes and manages consensus formation
 pub struct ConsensusManager {
-    /// Current block being voted on
-    current_block: RwLock<Option<Block>>,
-    /// Votes for the current block
-    votes: RwLock<HashMap<String, Vote>>,
+    state: RwLock<ConsensusState>,
     /// Total stake in the system
     total_stake: u64,
     /// Required stake percentage for consensus (e.g. 0.67 for 2/3)
@@ -20,32 +45,45 @@ pub struct ConsensusManager {
 impl ConsensusManager {
     pub fn new(total_stake: u64, finality_threshold: f64) -> Self {
         Self {
-            current_block: RwLock::new(None),
-            votes: RwLock::new(HashMap::new()),
+            state: RwLock::new(ConsensusState::new()),
             total_stake,
             finality_threshold,
         }
     }
 
     /// Start voting round for a new block
-    pub async fn start_voting_round(&self, block: Block) {
-        info!("Starting voting round for block {}", block.height);
-        let mut current = self.current_block.write().await;
-        *current = Some(block);
-        self.votes.write().await.clear();
+    pub async fn start_voting_round(&self, block: Block) -> Result<(), Error> {
+        let mut state = self.state.write().await;
+
+        match state.voting_state {
+            VotingState::Active => Err(Error::Internal(
+                "Voting round already in progress".to_string(),
+            )),
+            VotingState::Completed | VotingState::Inactive => {
+                state.current_block = Some(block);
+                state.votes.clear();
+                state.voting_state = VotingState::Active;
+                Ok(())
+            }
+        }
     }
 
     /// Add a vote from a validator
     pub async fn add_vote(&self, vote: Vote, stake: u64) -> Result<bool, Error> {
-        let current = self.current_block.read().await;
+        let mut state = self.state.write().await;
 
-        // Ensure we're voting on the current block
-        if let Some(block) = &*current {
+        // Check voting state
+        if state.voting_state != VotingState::Active {
+            return Err(Error::Internal("No active voting round".to_string()));
+        }
+
+        // Verify block hash
+        if let Some(block) = &state.current_block {
             if vote.block_hash != block.hash() {
                 warn!(
-                    "Vote for wrong block hash: expected {:?}, got {:?}",
-                    block.hash(),
-                    vote.block_hash
+                    "Vote for wrong block hash: expected {}, got {}",
+                    hex::encode(block.hash()),
+                    hex::encode(vote.block_hash)
                 );
                 return Err(Error::Internal("Vote for wrong block".to_string()));
             }
@@ -54,22 +92,24 @@ impl ConsensusManager {
         }
 
         // Add the vote
-        let mut votes = self.votes.write().await;
-        votes.insert(vote.agent_id.clone(), vote);
+        state.votes.insert(vote.agent_id.clone(), vote);
 
-        // Check if we have consensus
-        let result = self.check_consensus(&votes, stake).await;
-        if let Ok(true) = result {
+        // Check consensus
+        let consensus_reached = self.check_consensus(&state.votes, stake)?;
+
+        if consensus_reached {
             info!(
                 "Consensus reached for block {}",
-                current.as_ref().unwrap().height
+                state.current_block.as_ref().unwrap().height
             );
+            state.voting_state = VotingState::Completed;
         }
-        result
+
+        Ok(consensus_reached)
     }
 
     /// Check if we have reached consensus
-    async fn check_consensus(
+    fn check_consensus(
         &self,
         votes: &HashMap<String, Vote>,
         stake_per_validator: u64,
@@ -100,11 +140,16 @@ impl ConsensusManager {
 
     /// Get all current votes
     pub async fn get_votes(&self) -> HashMap<String, Vote> {
-        self.votes.read().await.clone()
+        self.state.read().await.votes.clone()
     }
 
     /// Get current block being voted on
     pub async fn get_current_block(&self) -> Option<Block> {
-        self.current_block.read().await.clone()
+        self.state.read().await.current_block.clone()
+    }
+
+    /// Get current voting state
+    pub async fn get_voting_state(&self) -> VotingState {
+        self.state.read().await.voting_state.clone()
     }
 }

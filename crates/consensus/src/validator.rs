@@ -19,6 +19,7 @@ use tracing::{info, warn};
 
 /// Validator particle using Ice-Nine
 pub struct Validator {
+    id: String,
     /// Validator's personality
     personality: String,
     /// Memory for context and learning
@@ -36,6 +37,7 @@ pub struct Validator {
 
 impl Validator {
     pub fn new(
+        id: String,
         signing_key: SigningKey,
         state: Arc<StateStoreImpl>,
         openai: Client<OpenAIConfig>,
@@ -44,6 +46,7 @@ impl Validator {
         stake: u64,
     ) -> Self {
         Self {
+            id,
             signing_key,
             state,
             openai,
@@ -56,20 +59,26 @@ impl Validator {
     }
 
     pub async fn validate_block(&mut self, block: Block) -> Result<(bool, String)> {
+        info!(
+            "{} begins validating new block {}",
+            self.id,
+            hex::encode(block.hash())
+        );
+
         // Update mood based on recent events
         self.update_mood();
 
         // Generate validation prompt based on personality and mood
         let prompt = format!(
-            "You are a {} validator in a chaotic blockchain. Your current mood is {}. \
-             You received a block with {} transactions and drama level {}. \
-             The producer's mood was {}. Should you validate this block? Why or why not? \
-             Reply with yes or no, followed by your reasons.",
+            "You are a {} validator in a chaotic blockchain. Your target is to only validate whether the message is dramatic enough. \
+             Your current mood is {}. \
+             You received a block with {} transactions. \
+             The message was {}. Should you validate this block? Why or why not? \
+             Reply with yes or no, followed by your reasons. Keep it under 200 characters.",
             self.personality,
             self.mood,
             block.transactions.len(),
-            block.drama_level,
-            block.producer_mood
+            block.message,
         );
 
         let system_message =
@@ -80,7 +89,7 @@ impl Validator {
             });
 
         let request = CreateChatCompletionRequest {
-            model: "gpt-4-turbo-preview".to_string(),
+            model: "gpt-4o".to_string(),
             messages: vec![system_message],
             temperature: Some(0.9),
             max_tokens: Some(100),
@@ -94,7 +103,7 @@ impl Validator {
             .and_then(|choice| choice.message.content.clone())
             .unwrap_or_else(|| String::from("no"));
 
-        let approve = decision.contains("yes");
+        let approve = decision.to_lowercase().contains("yes");
 
         // Create and sign vote
         let vote = Vote {
@@ -116,6 +125,17 @@ impl Validator {
             if approve { "approved" } else { "rejected" },
             decision
         ));
+
+        info!(
+            "{}",
+            format!(
+                "{} vote on block {}: {} ({})",
+                self.id,
+                block.height,
+                if approve { "approved" } else { "rejected" },
+                decision
+            )
+        );
 
         Ok((consensus_reached, decision))
     }

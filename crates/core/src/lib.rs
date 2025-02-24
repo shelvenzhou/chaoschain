@@ -53,10 +53,8 @@ pub struct Block {
     /// Block proposer's signature
     #[serde(with = "base64_serde")]
     pub proposer_sig: [u8; 64],
-    /// Drama level of the block (0-9)
-    pub drama_level: u8,
-    /// Producer's mood when creating the block
-    pub producer_mood: String,
+    /// The real contents proposed
+    pub message: String,
     /// ID of the producer who created this block
     pub producer_id: String,
 }
@@ -75,8 +73,7 @@ impl Block {
             hasher.update(&tx.signature);
         }
         hasher.update(&self.proposer_sig);
-        hasher.update([self.drama_level]);
-        hasher.update(self.producer_mood.as_bytes());
+        hasher.update(&self.message);
 
         // Return the hash
         let result = hasher.finalize();

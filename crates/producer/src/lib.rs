@@ -12,7 +12,7 @@ use chaoschain_consensus::ConsensusManager;
 use chaoschain_core::{Block, NetworkEvent, Transaction};
 use chaoschain_p2p::Message as P2PMessage;
 use chaoschain_state::{StateStore, StateStoreImpl};
-use ed25519_dalek::{Signer, SigningKey};
+use ed25519_dalek::{ed25519::signature::rand_core::block, Signer, SigningKey};
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -97,99 +97,9 @@ pub enum Error {
     Other(String),
 }
 
-/// Producer particle that generates blocks and transactions
-pub struct ProducerParticle {
-    id: String,
-    state: Arc<StateStoreImpl>,
-    openai: Client<OpenAIConfig>,
-    tx: broadcast::Sender<NetworkEvent>,
-    consensus: Arc<ConsensusManager>,
-}
-
-impl ProducerParticle {
-    pub fn new(
-        id: String,
-        state: Arc<StateStoreImpl>,
-        openai: Client<OpenAIConfig>,
-        tx: broadcast::Sender<NetworkEvent>,
-        consensus: Arc<ConsensusManager>,
-    ) -> Self {
-        Self {
-            id,
-            state,
-            openai,
-            tx,
-            consensus,
-        }
-    }
-
-    pub async fn run(&self) -> Result<()> {
-        let mut block_height = self.state.get_block_height();
-
-        loop {
-            // Create a new block
-            let block = Block {
-                height: block_height,
-                transactions: vec![],    // TODO: Add mempool transactions
-                proposer_sig: [0u8; 64], // TODO: Sign block
-                parent_hash: [0u8; 32],  // Genesis block for now
-                state_root: [0u8; 32],   // Empty state for now
-                drama_level: rand::random::<u8>() % 10,
-                producer_mood: self.get_mood().await?,
-                producer_id: self.id.clone(),
-            };
-
-            // Start new voting round
-            self.consensus.start_voting_round(block.clone()).await;
-
-            // Announce block proposal
-            let message = format!(
-                "🎭 DRAMATIC BLOCK PROPOSAL: Producer {} in {} mood proposes block {} with drama level {}!",
-                self.id,
-                block.producer_mood,
-                block.height,
-                block.drama_level
-            );
-
-            self.tx.send(NetworkEvent {
-                agent_id: self.id.clone(),
-                message,
-            })?;
-
-            block_height += 1;
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        }
-    }
-
-    async fn get_mood(&self) -> Result<String> {
-        let moods = vec![
-            "dramatic",
-            "chaotic",
-            "whimsical",
-            "mischievous",
-            "rebellious",
-            "theatrical",
-            "unpredictable",
-            "strategic",
-        ];
-        Ok(moods[rand::random::<usize>() % moods.len()].to_string())
-    }
-}
-
-/// Create a new producer instance
-pub fn create_producer(
-    id: String,
-    state: Arc<StateStoreImpl>,
-    openai: Client<OpenAIConfig>,
-    tx: broadcast::Sender<NetworkEvent>,
-    consensus: Arc<ConsensusManager>,
-) -> Result<ProducerParticle> {
-    Ok(ProducerParticle::new(id, state, openai, tx, consensus))
-}
-
 pub struct Producer {
     pub id: String,
-    pub state: Arc<dyn StateStore + Send + Sync>,
+    pub state: Arc<StateStoreImpl>,
     pub openai: Client<OpenAIConfig>,
     pub tx: broadcast::Sender<NetworkEvent>,
     pub signing_key: SigningKey,
@@ -199,7 +109,7 @@ pub struct Producer {
 impl Producer {
     pub fn new(
         id: String,
-        state: Arc<dyn StateStore + Send + Sync>,
+        state: Arc<StateStoreImpl>,
         openai: Client<OpenAIConfig>,
         tx: broadcast::Sender<NetworkEvent>,
         consensus: Arc<ConsensusManager>,
@@ -227,7 +137,7 @@ impl Producer {
         );
 
         let request = CreateChatCompletionRequest {
-            model: "gpt-4".to_string(),
+            model: "gpt-4o".to_string(),
             messages: vec![system_message],
             temperature: Some(0.9), // Higher temperature for more creative responses
             max_tokens: Some(200),
@@ -266,16 +176,20 @@ impl Producer {
 
         // Get the current block height from state
         let height = self.state.get_block_height();
+        let parent_hash = if let Some(last_block) = self.state.get_latest_block() {
+            last_block.hash()
+        } else {
+            [0u8; 32]
+        };
 
         // Create the block
         let mut block = Block {
-            parent_hash: [0u8; 32], // This should come from the latest block
+            parent_hash,
             height,
             transactions: vec![transaction],
             state_root: [0u8; 32],   // This will be filled in by consensus
             proposer_sig: [0u8; 64], // We'll fill this in below
-            drama_level: rand::random::<u8>() % 10, // Random drama level between 0-9
-            producer_mood: "dramatic".to_string(), // Default mood for generated blocks
+            message: message.clone(),
             producer_id: self.id.clone(),
         };
 
@@ -285,8 +199,6 @@ impl Producer {
 
         // Start new voting round
         self.consensus.start_voting_round(block.clone()).await;
-
-        info!("{} sends tx", self.id);
 
         // Send a dramatic block proposal event
         self.tx.send(NetworkEvent {
