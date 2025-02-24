@@ -1,3 +1,4 @@
+mod agent;
 mod web;
 
 use anyhow::Result;
@@ -10,7 +11,11 @@ use chaoschain_state::{StateStore, StateStoreImpl};
 use clap::Parser;
 use dotenv::dotenv;
 use ed25519_dalek::SigningKey;
+use glob::glob;
 use rand::rngs::OsRng;
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -44,6 +49,49 @@ impl OpenAIConfig {
             .with_api_key(&self.api_key)
             .with_api_base(&self.api_base)
     }
+}
+
+async fn load_character_configs() -> Result<Vec<agent::AgentInfo>> {
+    let project_root = env::current_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to get current directory: {}", e))?;
+
+    let pattern = project_root
+        .join("configs")
+        .join("*.character.json")
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("Invalid path"))?
+        .to_string();
+
+    info!("Looking for character configs in: {}", pattern);
+
+    let mut configs = Vec::new();
+
+    for entry in
+        glob(&pattern).map_err(|e| anyhow::anyhow!("Failed to read glob pattern: {}", e))?
+    {
+        match entry {
+            Ok(path) => match agent::read_agent_info(&path) {
+                Ok(agent_info) => {
+                    info!("Loaded character config: {}", path.display());
+                    configs.push(agent_info);
+                }
+                Err(e) => {
+                    warn!("Failed to read character config {}: {}", path.display(), e);
+                }
+            },
+            Err(e) => {
+                warn!("Failed to read entry: {}", e);
+            }
+        }
+    }
+
+    if configs.is_empty() {
+        warn!("No character configs found in {}", pattern);
+    } else {
+        info!("Loaded {} character configs", configs.len());
+    }
+
+    Ok(configs)
 }
 
 #[tokio::main]
@@ -197,14 +245,26 @@ async fn main() -> anyhow::Result<()> {
             }
 
             // Create and start producers
-            for i in 0..producers {
-                let producer_id = format!("producer-{}", i);
+            let character_configs = load_character_configs().await?;
+            let actual_producers = if producers == 0 {
+                character_configs.len()
+            } else {
+                (producers as usize).min(character_configs.len())
+            };
+
+            for i in 0..actual_producers {
+                let producer_id = character_configs[i].name.clone();
+                let system_prompt = character_configs[i].system.clone();
                 let state = shared_state.clone();
                 let consensus = consensus_manager.clone();
 
-                info!("Starting producer {}", producer_id);
+                info!(
+                    "Starting producer {}, with system prompt {}",
+                    producer_id, system_prompt
+                );
                 let producer = Producer::new(
                     producer_id.clone(),
+                    system_prompt.clone(),
                     state.clone(),
                     openai.clone(),
                     tx.clone(),

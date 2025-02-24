@@ -99,6 +99,7 @@ pub enum Error {
 
 pub struct Producer {
     pub id: String,
+    pub system_prompt: String,
     pub state: Arc<StateStoreImpl>,
     pub openai: Client<OpenAIConfig>,
     pub tx: broadcast::Sender<NetworkEvent>,
@@ -109,6 +110,7 @@ pub struct Producer {
 impl Producer {
     pub fn new(
         id: String,
+        system_prompt: String,
         state: Arc<StateStoreImpl>,
         openai: Client<OpenAIConfig>,
         tx: broadcast::Sender<NetworkEvent>,
@@ -119,6 +121,7 @@ impl Producer {
 
         Self {
             id,
+            system_prompt,
             state,
             openai,
             tx,
@@ -130,7 +133,7 @@ impl Producer {
     pub async fn generate_block(&self) -> Result<Block, Error> {
         let system_message = ChatCompletionRequestMessage::System(
             ChatCompletionRequestSystemMessage {
-                content: "You are a block producer in ChaosChain, a blockchain where rules are optional and drama is mandatory. Generate a dramatic proposal for the next block. This can include memes, jokes, bribes, or dramatic statements. Be creative and entertaining! Keep it under 200 characters.".to_string(),
+                content: self.system_prompt.clone(),
                 role: Role::System,
                 name: None,
             }
