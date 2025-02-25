@@ -16,6 +16,7 @@ use rand::rngs::OsRng;
 use rand::Rng;
 use std::collections::HashMap;
 use std::env;
+use std::fs;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -49,6 +50,45 @@ impl OpenAIConfig {
             .with_api_key(&self.api_key)
             .with_api_base(&self.api_base)
     }
+}
+
+fn read_genesis_message() -> Result<String> {
+    let project_root = env::current_dir()
+        .map_err(|e| anyhow::anyhow!("Failed to get current directory: {}", e))?;
+
+    let genesis_path = project_root.join("configs").join("genesis_block.txt");
+
+    if !genesis_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Genesis block message file not found at: {}",
+            genesis_path.display()
+        ));
+    }
+
+    fs::read_to_string(&genesis_path)
+        .map(|s| s.trim().to_string())
+        .map_err(|e| anyhow::anyhow!("Failed to read genesis message: {}", e))
+}
+
+fn create_genesis_block() -> Result<Block> {
+    let message = read_genesis_message()?;
+
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|e| anyhow::anyhow!("Failed to get system time: {}", e))?
+        .as_secs();
+
+    Ok(Block {
+        parent_hash: [0u8; 32],
+        height: 0,
+        transactions: Vec::new(),
+        state_root: [0u8; 32],
+        proposer_sig: [0u8; 64],
+        message,
+        producer_id: "Spore".to_string(),
+        votes: HashMap::from([("Spore".to_string(), (true, "YES".to_string()))]),
+        timestamp,
+    })
 }
 
 async fn load_character_configs() -> Result<Vec<agent::AgentInfo>> {
@@ -140,6 +180,8 @@ async fn main() -> anyhow::Result<()> {
 
             // Create shared state
             let shared_state = Arc::new(StateStoreImpl::new(ChainConfig::default()));
+            let genesis_block = create_genesis_block().unwrap();
+            shared_state.apply_block(&genesis_block);
 
             if web {
                 info!("Starting web UI");
