@@ -68,17 +68,37 @@ impl Validator {
         // Update mood based on recent events
         self.update_mood();
 
-        // Generate validation prompt based on personality and mood
+        // Get recent messages for context
+        let recent_messages = self.state.get_recent_messages(5);
+
+        // Build context string from recent messages
+        let context = if recent_messages.is_empty() {
+            "No previous messages available.".to_string()
+        } else {
+            let messages_context = recent_messages
+                .iter()
+                .enumerate()
+                .map(|(i, msg)| format!("Message {}: {}", recent_messages.len() - i, msg))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("Recent messages for context:\n{}", messages_context)
+        };
+
+        // Generate validation prompt based on personality, mood, and context
         let prompt = format!(
-            "You are a {} validator in a chaotic blockchain. Your target is to only validate whether the message is dramatic enough. \
-             Your current mood is {}. \
-             You received a block with {} transactions. \
-             The message was {}. Should you validate this block? Why or why not? \
-             Reply with yes or no, followed by your reasons. Keep it under 200 characters.",
+            "You are a {} validator in a chaotic blockchain, currently feeling {}. \
+             Your role is to validate whether messages are sufficiently dramatic and engaging.\n\n\
+             {}\n\n\
+             New message to validate: \"{}\"\n\n\
+             Consider:\n\
+             - Is the message dramatic and engaging enough?\n\
+             - Does it maintain or enhance the narrative flow from recent messages?\n\
+             - Is it creative and unique?\n\n\
+             Reply with 'YES' or 'NO' followed by a brief, dramatic justification (max 200 characters).",
             self.personality,
             self.mood,
-            block.transactions.len(),
-            block.message,
+            context,
+            block.message
         );
 
         let system_message =
@@ -93,6 +113,8 @@ impl Validator {
             messages: vec![system_message],
             temperature: Some(0.9),
             max_tokens: Some(100),
+            presence_penalty: Some(0.6),  // Encourage varied responses
+            frequency_penalty: Some(0.6), // Discourage repetition
             ..Default::default()
         };
 
@@ -101,9 +123,9 @@ impl Validator {
             .choices
             .first()
             .and_then(|choice| choice.message.content.clone())
-            .unwrap_or_else(|| String::from("no"));
+            .unwrap_or_else(|| String::from("NO - Failed to get validation response"));
 
-        let approve = decision.to_lowercase().contains("yes");
+        let approve = decision.to_uppercase().contains("YES");
 
         // Create and sign vote
         let vote = Vote {

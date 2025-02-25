@@ -91,6 +91,50 @@ impl StateStoreImpl {
         blocks.iter().rev().take(n).cloned().collect()
     }
 
+    /// Get messages from the most recent blocks
+    ///
+    /// # Arguments
+    /// * `n` - Number of recent blocks to get messages from
+    ///
+    /// # Returns
+    /// * `Vec<String>` - Messages from recent blocks in reverse chronological order
+    ///
+    /// # Note
+    /// If n is greater than the number of available blocks, returns messages from all blocks
+    pub fn get_recent_messages(&self, n: usize) -> Vec<String> {
+        let blocks = self.blocks.read();
+
+        // Get messages from the n most recent blocks in reverse chronological order
+        blocks
+            .iter()
+            .rev() // Reverse to get most recent first
+            .take(n) // Take only n blocks
+            .map(|block| block.message.clone())
+            .collect()
+    }
+
+    /// Get messages from blocks within a height range
+    ///
+    /// # Arguments
+    /// * `start_height` - Starting block height (inclusive)
+    /// * `end_height` - Ending block height (inclusive)
+    ///
+    /// # Returns
+    /// * `Vec<String>` - Messages from blocks within the specified range
+    pub fn get_messages_by_height_range(&self, start_height: u64, end_height: u64) -> Vec<String> {
+        if start_height > end_height {
+            return Vec::new();
+        }
+
+        let blocks = self.blocks.read();
+
+        blocks
+            .iter()
+            .filter(|block| block.height >= start_height && block.height <= end_height)
+            .map(|block| block.message.clone())
+            .collect()
+    }
+
     /// Get block timestamp (for now, just use block height * 10 seconds)
     pub fn get_block_timestamp(&self, block: &Block) -> Option<u64> {
         Some(block.height * 10)
