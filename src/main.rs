@@ -13,10 +13,9 @@ use dotenv::dotenv;
 use ed25519_dalek::SigningKey;
 use glob::glob;
 use rand::rngs::OsRng;
+use rand::Rng;
 use std::collections::HashMap;
 use std::env;
-use std::fs;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{info, warn};
@@ -93,6 +92,11 @@ async fn load_character_configs() -> Result<Vec<agent::AgentInfo>> {
     }
 
     Ok(configs)
+}
+
+async fn random_delay() {
+    let delay = rand::thread_rng().gen_range(1000..3000);
+    tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
 }
 
 #[tokio::main]
@@ -290,6 +294,7 @@ async fn main() -> anyhow::Result<()> {
                 tokio::spawn(async move {
                     loop {
                         let _ = producer.generate_block().await.unwrap();
+                        random_delay().await;
                     }
                 });
             }
