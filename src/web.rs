@@ -104,13 +104,16 @@ async fn get_network_status(State(state): State<Arc<AppState>>) -> Json<NetworkS
     let chain_state = state_guard.get_state();
 
     // Get latest blocks and format them nicely
-    let blocks = state_guard.get_latest_blocks(10);
+    let blocks = state_guard.get_latest_blocks(100);
     let latest_blocks = blocks
         .iter()
         .map(|block| {
             // Create a JSON object with block details including votes
             let block_data = serde_json::json!({
                 "id": block.height,
+                "hash": hex::encode(block.hash()),
+                "parent_hash": hex::encode(block.parent_hash),
+                "timestamp": block.timestamp,
                 "producer": block.producer_id,
                 "message": block.message,
                 "transaction_count": block.transactions.len(),
