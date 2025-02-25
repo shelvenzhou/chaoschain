@@ -21,6 +21,8 @@ struct ConsensusState {
     votes: HashMap<String, Vote>,
     /// Current voting state
     voting_state: VotingState,
+    /// Stores validator feedback for rejected blocks, keyed by producer ID
+    validator_feedback: HashMap<String, Vec<String>>,
 }
 
 impl ConsensusState {
@@ -29,6 +31,7 @@ impl ConsensusState {
             current_block: None,
             votes: HashMap::new(),
             voting_state: VotingState::Inactive,
+            validator_feedback: HashMap::new(),
         }
     }
 }
@@ -91,6 +94,14 @@ impl ConsensusManager {
             return Err(Error::Internal("No active voting round".to_string()));
         }
 
+        // If it's a rejection, store the feedback
+        if !vote.approve {
+            if let Some(block) = &state.current_block {
+                self.store_feedback(block.producer_id.clone(), vote.reason.clone())
+                    .await;
+            }
+        }
+
         // Add the vote
         state.votes.insert(vote.agent_id.clone(), vote);
 
@@ -151,5 +162,24 @@ impl ConsensusManager {
     /// Get current voting state
     pub async fn get_voting_state(&self) -> VotingState {
         self.state.read().await.voting_state.clone()
+    }
+
+    /// Store feedback for a producer
+    pub async fn store_feedback(&self, producer_id: String, feedback: String) {
+        let mut state = self.state.write().await;
+        state
+            .validator_feedback
+            .entry(producer_id)
+            .or_insert_with(Vec::new)
+            .push(feedback);
+    }
+
+    /// Get and clear feedback for a producer
+    pub async fn get_and_clear_feedback(&self, producer_id: &str) -> Vec<String> {
+        let mut state = self.state.write().await;
+        state
+            .validator_feedback
+            .remove(producer_id)
+            .unwrap_or_default()
     }
 }

@@ -131,26 +131,41 @@ impl Producer {
     }
 
     pub async fn generate_block(&self) -> Result<Block, Error> {
-        // Get recent messages for context
-        let recent_messages = self.state.get_recent_messages(5); // Get last 5 messages
+        // Get any feedback from previous blocks
+        let feedback = self.consensus.get_and_clear_feedback(&self.id).await;
 
-        // Build context string from recent messages
-        let context = if recent_messages.is_empty() {
-            "No previous messages available.".to_string()
-        } else {
-            let messages_context = recent_messages
-                .iter()
-                .enumerate()
-                .map(|(i, msg)| format!("Message {}: {}", recent_messages.len() - i, msg))
-                .collect::<Vec<_>>()
-                .join("\n");
-            format!("Recent messages:\n{}", messages_context)
+        // Get recent messages for context
+        let recent_messages = self.state.get_recent_messages(5);
+
+        // Build context string including feedback
+        let context = {
+            let mut context = String::new();
+
+            if !feedback.is_empty() {
+                context.push_str("Validator feedback from previous blocks:\n");
+                for (i, f) in feedback.iter().enumerate() {
+                    context.push_str(&format!("Feedback {}: {}\n", i + 1, f));
+                }
+                context.push_str("\n");
+            }
+
+            if !recent_messages.is_empty() {
+                context.push_str("Recent messages:\n");
+                for (i, msg) in recent_messages.iter().enumerate() {
+                    context.push_str(&format!("Message {}: {}\n", recent_messages.len() - i, msg));
+                }
+            } else {
+                context.push_str("No previous messages available.");
+            }
+
+            context
         };
 
-        // Create system message with context
+        // Create system message with context and feedback
         let system_content = format!(
-            "{}\n\nContext from recent blocks:\n{}",
-            self.system_prompt, context
+            "{}\n\nConsider the following context and feedback:\n{}",
+            self.system_prompt,
+            context
         );
 
         let system_message =
