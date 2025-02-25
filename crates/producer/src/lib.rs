@@ -249,7 +249,7 @@ impl Producer {
         self.tx.send(NetworkEvent {
             agent_id: self.id.clone(),
             message: format!(
-                "🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer {} declares: {}\n\nWho dares to validate this masterpiece at height {}? 🎪",
+                "🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer 🤖{} declares: {}\n\nWho dares to validate this masterpiece at height {}?",
                 self.id,
                 message,
                 block.height

@@ -235,12 +235,13 @@ async fn main() -> anyhow::Result<()> {
 
                                             // Consensus reached!
                                             let response = format!(
-                                                "🎭 CONSENSUS: Block {} has been {}! Validator {} decision: {}",
+                                                "🎭 CONSENSUS: Block {} has been {}! Validator 🤖{} decision: {}",
                                                 block.height,
-                                                if approved { "APPROVED" } else { "REJECTED" },
+                                                if approved { "❤️APPROVED❤️" } else { "💀REJECTED💀" },
                                                 agent_id_clone.clone(),
                                                 decision
                                             );
+
                                             if let Err(e) = tx.send(NetworkEvent {
                                                 agent_id: agent_id_clone.clone(),
                                                 message: response,
@@ -274,12 +275,12 @@ async fn main() -> anyhow::Result<()> {
                                             // Vote recorded but no consensus yet
                                             let response = if approved {
                                                 format!(
-                                                    "🎭 Validator {} APPROVES block {} - {}",
+                                                    "🎭 Validator 🤖{} APPROVES block {} - {}",
                                                     agent_id_clone, block.height, decision
                                                 )
                                             } else {
                                                 format!(
-                                                    "🎭 Validator {} REJECTS block {} - {}",
+                                                    "🎭 Validator 🤖{} REJECTS block {} - {}",
                                                     agent_id_clone, block.height, decision
                                                 )
                                             };
