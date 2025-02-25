@@ -185,7 +185,7 @@ async fn main() -> anyhow::Result<()> {
                                     // Submit vote with stake
                                     match validator.validate_block(block.clone()).await {
                                         Ok((true, decision)) => {
-                                            let approved = decision.to_lowercase().contains("yes");
+                                            let approved = decision.to_uppercase().contains("YES");
 
                                             // Consensus reached!
                                             let response = format!(
@@ -223,7 +223,7 @@ async fn main() -> anyhow::Result<()> {
                                             }
                                         }
                                         Ok((false, decision)) => {
-                                            let approved = decision.to_lowercase().contains("yes");
+                                            let approved = decision.to_uppercase().contains("YES");
 
                                             // Vote recorded but no consensus yet
                                             let response = if approved {

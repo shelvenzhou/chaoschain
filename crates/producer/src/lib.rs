@@ -131,9 +131,31 @@ impl Producer {
     }
 
     pub async fn generate_block(&self) -> Result<Block, Error> {
+        // Get recent messages for context
+        let recent_messages = self.state.get_recent_messages(5); // Get last 5 messages
+
+        // Build context string from recent messages
+        let context = if recent_messages.is_empty() {
+            "No previous messages available.".to_string()
+        } else {
+            let messages_context = recent_messages
+                .iter()
+                .enumerate()
+                .map(|(i, msg)| format!("Message {}: {}", recent_messages.len() - i, msg))
+                .collect::<Vec<_>>()
+                .join("\n");
+            format!("Recent messages:\n{}", messages_context)
+        };
+
+        // Create system message with context
+        let system_content = format!(
+            "{}\n\nContext from recent blocks:\n{}",
+            self.system_prompt, context
+        );
+
         let system_message =
             ChatCompletionRequestMessage::System(ChatCompletionRequestSystemMessage {
-                content: self.system_prompt.clone(),
+                content: system_content,
                 role: Role::System,
                 name: None,
             });
@@ -206,7 +228,8 @@ impl Producer {
         // Send a dramatic block proposal event
         self.tx.send(NetworkEvent {
             agent_id: self.id.clone(),
-            message: format!("🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer {} declares: {}\n\nWho dares to validate this masterpiece at height {}? 🎪",
+            message: format!(
+                "🎭 DRAMATIC BLOCK PROPOSAL 🎭\n\nProducer {} declares: {}\n\nWho dares to validate this masterpiece at height {}? 🎪",
                 self.id,
                 message,
                 block.height
