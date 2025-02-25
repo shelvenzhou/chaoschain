@@ -61,6 +61,7 @@ pub struct Block {
     pub producer_id: String,
     /// Vote details
     pub votes: HashMap<String, (bool, String)>,
+    pub timestamp: u64,
 }
 
 impl Block {
