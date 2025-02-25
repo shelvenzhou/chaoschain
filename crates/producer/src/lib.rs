@@ -222,6 +222,10 @@ impl Producer {
         };
 
         // Create the block
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_secs();
         let mut block = Block {
             parent_hash,
             height,
@@ -231,6 +235,7 @@ impl Producer {
             message: message.clone(),
             producer_id: self.id.clone(),
             votes: HashMap::new(), // This will be filled in by consensus
+            timestamp,
         };
 
         // Sign the block
