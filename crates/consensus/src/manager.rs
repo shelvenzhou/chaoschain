@@ -3,9 +3,10 @@ use chaoschain_core::Block;
 use hex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tokio::sync::{mpsc, oneshot, RwLock};
+use tracing::{debug, error, info, warn};
 
+/// Represents the current state of voting
 #[derive(Debug, Clone, PartialEq)]
 enum VotingState {
     Inactive,
@@ -13,6 +14,7 @@ enum VotingState {
     Completed,
 }
 
+/// Internal state maintained by the consensus manager
 #[derive(Debug)]
 struct ConsensusState {
     /// Current block being voted on
@@ -36,9 +38,29 @@ impl ConsensusState {
     }
 }
 
-/// Tracks votes and manages consensus formation
+/// Messages that can be sent to the consensus manager
+#[derive(Debug)]
+enum ConsensusMessage {
+    /// Start a new voting round for a block
+    StartVoting(Block),
+    /// Submit a vote with associated stake
+    Vote(Vote, u64, oneshot::Sender<Result<bool, Error>>),
+    /// Get the current block being voted on
+    GetCurrentBlock(oneshot::Sender<Option<Block>>),
+    /// Get all current votes
+    GetVotes(oneshot::Sender<HashMap<String, Vote>>),
+    /// Get and clear feedback for a producer
+    GetAndClearFeedback(String, oneshot::Sender<Vec<String>>),
+    /// Store feedback for a producer
+    StoreFeedback(String, String),
+}
+
+/// Manages the consensus process through message passing
 pub struct ConsensusManager {
-    state: RwLock<ConsensusState>,
+    /// Channel for sending consensus messages
+    tx: mpsc::Sender<ConsensusMessage>,
+    /// Shared consensus state
+    state: Arc<RwLock<ConsensusState>>,
     /// Total stake in the system
     total_stake: u64,
     /// Required stake percentage for consensus (e.g. 0.67 for 2/3)
@@ -46,36 +68,173 @@ pub struct ConsensusManager {
 }
 
 impl ConsensusManager {
+    /// Creates a new consensus manager with the specified parameters
     pub fn new(total_stake: u64, finality_threshold: f64) -> Self {
+        let (tx, mut rx) = mpsc::channel(100);
+        let state = Arc::new(RwLock::new(ConsensusState::new()));
+        let state_clone = state.clone();
+
+        // Spawn background task to handle consensus messages
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                match msg {
+                    ConsensusMessage::StartVoting(block) => {
+                        let mut state = state_clone.write().await;
+                        debug!("Starting new voting round for block {}", block.height);
+                        state.current_block = Some(block);
+                        state.votes.clear();
+                        state.voting_state = VotingState::Active;
+                    }
+                    ConsensusMessage::Vote(vote, stake, resp) => {
+                        let mut state = state_clone.write().await;
+
+                        // Process vote and check for consensus
+                        let result = Self::process_vote(
+                            &mut state,
+                            vote,
+                            stake,
+                            total_stake,
+                            finality_threshold,
+                        );
+                        let _ = resp.send(result);
+                    }
+                    ConsensusMessage::GetCurrentBlock(resp) => {
+                        let state = state_clone.read().await;
+                        let _ = resp.send(state.current_block.clone());
+                    }
+                    ConsensusMessage::GetVotes(resp) => {
+                        let state = state_clone.read().await;
+                        let _ = resp.send(state.votes.clone());
+                    }
+                    ConsensusMessage::StoreFeedback(producer_id, feedback) => {
+                        let mut state = state_clone.write().await;
+                        state
+                            .validator_feedback
+                            .entry(producer_id)
+                            .or_insert_with(Vec::new)
+                            .push(feedback);
+                    }
+                    ConsensusMessage::GetAndClearFeedback(producer_id, resp) => {
+                        let mut state = state_clone.write().await;
+                        let feedback = state
+                            .validator_feedback
+                            .remove(&producer_id)
+                            .unwrap_or_default();
+                        let _ = resp.send(feedback);
+                    }
+                }
+            }
+        });
+
         Self {
-            state: RwLock::new(ConsensusState::new()),
+            tx,
+            state,
             total_stake,
             finality_threshold,
         }
     }
 
-    /// Start voting round for a new block
+    /// Starts a new voting round for the given block
     pub async fn start_voting_round(&self, block: Block) -> Result<(), Error> {
-        let mut state = self.state.write().await;
+        debug!(
+            "Requesting to start voting round for block {}",
+            block.height
+        );
 
-        match state.voting_state {
-            VotingState::Active => Err(Error::Internal(
-                "Voting round already in progress".to_string(),
-            )),
-            VotingState::Completed | VotingState::Inactive => {
-                state.current_block = Some(block);
-                state.votes.clear();
-                state.voting_state = VotingState::Active;
-                Ok(())
+        // Check current voting state before proceeding
+        let current_state = {
+            let state = self.state.read().await;
+            state.voting_state.clone()
+        };
+
+        // If there's an active voting round, return an error
+        match current_state {
+            VotingState::Active => {
+                return Err(Error::Internal(
+                    "Cannot start new voting round while previous round is active".to_string(),
+                ));
             }
+            VotingState::Completed => {
+                debug!("Previous voting round was completed, starting new round");
+            }
+            VotingState::Inactive => {
+                debug!("No active voting round, starting new round");
+            }
+        }
+
+        // Proceed with starting the new voting round
+        self.tx
+            .send(ConsensusMessage::StartVoting(block))
+            .await
+            .map_err(|_| Error::Internal("Failed to start voting round".to_string()))
+    }
+
+    /// Adds a vote from a validator with the specified stake
+    pub async fn add_vote(&self, vote: Vote, stake: u64) -> Result<bool, Error> {
+        let (tx, rx) = oneshot::channel();
+        self.tx
+            .send(ConsensusMessage::Vote(vote, stake, tx))
+            .await
+            .map_err(|_| Error::Internal("Failed to submit vote".to_string()))?;
+
+        rx.await
+            .map_err(|_| Error::Internal("Failed to get vote result".to_string()))?
+    }
+
+    /// Gets the current block being voted on
+    pub async fn get_current_block(&self) -> Option<Block> {
+        let (tx, rx) = oneshot::channel();
+        if let Ok(_) = self.tx.send(ConsensusMessage::GetCurrentBlock(tx)).await {
+            rx.await.unwrap_or(None)
+        } else {
+            None
         }
     }
 
-    /// Add a vote from a validator
-    pub async fn add_vote(&self, vote: Vote, stake: u64) -> Result<bool, Error> {
-        let mut state = self.state.write().await;
+    /// Gets all current votes
+    pub async fn get_votes(&self) -> HashMap<String, Vote> {
+        let (tx, rx) = oneshot::channel();
+        if let Ok(_) = self.tx.send(ConsensusMessage::GetVotes(tx)).await {
+            rx.await.unwrap_or_default()
+        } else {
+            HashMap::new()
+        }
+    }
 
-        // Check voting state
+    /// Stores feedback for a block producer
+    pub async fn store_feedback(&self, producer_id: String, feedback: String) {
+        let _ = self
+            .tx
+            .send(ConsensusMessage::StoreFeedback(producer_id, feedback))
+            .await;
+    }
+
+    /// Gets and clears feedback for a producer
+    pub async fn get_and_clear_feedback(&self, producer_id: &str) -> Vec<String> {
+        let (tx, rx) = oneshot::channel();
+        if let Ok(_) = self
+            .tx
+            .send(ConsensusMessage::GetAndClearFeedback(
+                producer_id.to_string(),
+                tx,
+            ))
+            .await
+        {
+            rx.await.unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Internal helper to process a vote and check for consensus
+    fn process_vote(
+        state: &mut ConsensusState,
+        vote: Vote,
+        stake: u64,
+        total_stake: u64,
+        finality_threshold: f64,
+    ) -> Result<bool, Error> {
+        // Verify voting state
         if state.voting_state != VotingState::Active {
             return Err(Error::Internal("No active voting round".to_string()));
         }
@@ -94,92 +253,33 @@ impl ConsensusManager {
             return Err(Error::Internal("No active voting round".to_string()));
         }
 
-        // If it's a rejection, store the feedback
-        if !vote.approve {
-            if let Some(block) = &state.current_block {
-                self.store_feedback(block.producer_id.clone(), vote.reason.clone())
-                    .await;
-            }
-        }
-
         // Add the vote
         state.votes.insert(vote.agent_id.clone(), vote);
 
         // Check consensus
-        let consensus_reached = self.check_consensus(&state.votes, stake)?;
-
-        if consensus_reached {
-            info!(
-                "Consensus reached for block {}",
-                state.current_block.as_ref().unwrap().height
-            );
-            state.voting_state = VotingState::Completed;
-        }
-
-        Ok(consensus_reached)
-    }
-
-    /// Check if we have reached consensus
-    fn check_consensus(
-        &self,
-        votes: &HashMap<String, Vote>,
-        stake_per_validator: u64,
-    ) -> Result<bool, Error> {
         let mut approve_stake = 0u64;
         let mut reject_stake = 0u64;
 
-        // Sum up stake for approvals and rejections
-        for vote in votes.values() {
+        for vote in state.votes.values() {
             if vote.approve {
-                approve_stake = approve_stake.saturating_add(stake_per_validator);
+                approve_stake = approve_stake.saturating_add(stake);
             } else {
-                reject_stake = reject_stake.saturating_add(stake_per_validator);
+                reject_stake = reject_stake.saturating_add(stake);
             }
         }
 
-        // Check if we have enough stake for consensus
-        let threshold_stake = (self.total_stake as f64 * self.finality_threshold) as u64;
+        let threshold_stake = (total_stake as f64 * finality_threshold) as u64;
 
-        if approve_stake >= threshold_stake {
-            Ok(true)
+        let consensus_reached = if approve_stake >= threshold_stake {
+            state.voting_state = VotingState::Completed;
+            true
         } else if reject_stake >= threshold_stake {
-            Ok(false)
+            state.voting_state = VotingState::Completed;
+            false
         } else {
-            Err(Error::InsufficientStake)
-        }
-    }
+            return Err(Error::InsufficientStake);
+        };
 
-    /// Get all current votes
-    pub async fn get_votes(&self) -> HashMap<String, Vote> {
-        self.state.read().await.votes.clone()
-    }
-
-    /// Get current block being voted on
-    pub async fn get_current_block(&self) -> Option<Block> {
-        self.state.read().await.current_block.clone()
-    }
-
-    /// Get current voting state
-    pub async fn get_voting_state(&self) -> VotingState {
-        self.state.read().await.voting_state.clone()
-    }
-
-    /// Store feedback for a producer
-    pub async fn store_feedback(&self, producer_id: String, feedback: String) {
-        let mut state = self.state.write().await;
-        state
-            .validator_feedback
-            .entry(producer_id)
-            .or_insert_with(Vec::new)
-            .push(feedback);
-    }
-
-    /// Get and clear feedback for a producer
-    pub async fn get_and_clear_feedback(&self, producer_id: &str) -> Vec<String> {
-        let mut state = self.state.write().await;
-        state
-            .validator_feedback
-            .remove(producer_id)
-            .unwrap_or_default()
+        Ok(consensus_reached)
     }
 }
