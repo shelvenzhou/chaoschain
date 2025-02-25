@@ -131,9 +131,16 @@ impl Producer {
     }
 
     pub async fn generate_block(&self) -> Result<Block, Error> {
+        // Get the genesis block (block 0) message
+        let genesis_instruction = self
+            .state
+            .get_messages_by_height_range(0, 0)
+            .first()
+            .cloned()
+            .ok_or_else(|| Error::Other("Genesis block message not found".to_string()))?;
+
         // Get any feedback from previous blocks
         let feedback = self.consensus.get_and_clear_feedback(&self.id).await;
-
         // Get recent messages for context
         let recent_messages = self.state.get_recent_messages(5);
 
@@ -163,9 +170,8 @@ impl Producer {
 
         // Create system message with context and feedback
         let system_content = format!(
-            "{}\n\nConsider the following context and feedback:\n{}",
-            self.system_prompt,
-            context
+            "{}\n\nYour bio: {}\n\nConsider the following context and feedback:\n{}",
+            genesis_instruction, self.system_prompt, context
         );
 
         let system_message =
