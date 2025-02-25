@@ -5,7 +5,6 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use chaoschain_core::{Block, NetworkEvent};
 use chaoschain_state::StateStoreImpl;
 use chrono;
 use futures::stream::Stream;
@@ -13,12 +12,14 @@ use futures::StreamExt;
 use hex;
 use serde::{Deserialize, Serialize};
 use serde_json;
+use chaoschain_core::{NetworkEvent, Block};
 use std::collections::HashMap;
 use std::sync::RwLock;
 use std::{net::SocketAddr, sync::Arc};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tower_http::services::ServeDir;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
 /// Web server state
@@ -70,10 +71,22 @@ pub async fn start_web_server(
         state: state.clone(),
     });
 
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/api/network/status", get(get_network_status))
         .route("/api/events", get(events_handler))
         .nest_service("/", ServeDir::new("static"))
+        .layer(cors)
         .with_state(app_state);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
@@ -95,13 +108,23 @@ async fn get_network_status(State(state): State<Arc<AppState>>) -> Json<NetworkS
     let latest_blocks = blocks
         .iter()
         .map(|block| {
-            format!(
-                "Block #{} - Producer: {}, Message: {}, Transactions: {}",
-                block.height,
-                block.producer_id,
-                block.message,
-                block.transactions.len()
-            )
+            // Create a JSON object with block details including votes
+            let block_data = serde_json::json!({
+                "id": block.height,
+                "producer": block.producer_id,
+                "message": block.message,
+                "transaction_count": block.transactions.len(),
+                "votes": block.votes.iter().map(|(validator_id, (approved, comment))| {
+                    serde_json::json!({
+                        "validator": validator_id,
+                        "approved": approved,
+                        "comment": comment
+                    })
+                }).collect::<Vec<_>>()
+            });
+
+            // Convert the JSON object to a string
+            serde_json::to_string(&block_data).unwrap_or_else(|_| String::from("{}"))
         })
         .collect();
 

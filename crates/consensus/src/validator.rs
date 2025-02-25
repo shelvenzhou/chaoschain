@@ -107,7 +107,8 @@ impl Validator {
 
         // Create and sign vote
         let vote = Vote {
-            agent_id: hex::encode(self.signing_key.verifying_key().as_bytes()),
+            agent_id: self.id.clone(),
+            // agent_id: hex::encode(self.signing_key.verifying_key().as_bytes()),
             block_hash: block.hash(),
             approve,
             reason: decision.clone(),
