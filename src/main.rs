@@ -336,7 +336,9 @@ async fn main() -> anyhow::Result<()> {
 
                 tokio::spawn(async move {
                     loop {
-                        let _ = producer.generate_block().await.unwrap();
+                        if let Err(e) = producer.generate_block().await {
+                            warn!("Error generating block: {}", e);
+                        }
                         random_delay().await;
                     }
                 });
