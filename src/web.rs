@@ -104,7 +104,7 @@ async fn get_network_status(State(state): State<Arc<AppState>>) -> Json<NetworkS
     let chain_state = state_guard.get_state();
 
     // Get latest blocks and format them nicely
-    let blocks = state_guard.get_latest_blocks(10);
+    let blocks = state_guard.get_latest_blocks(100);
     let latest_blocks = blocks
         .iter()
         .map(|block| {
