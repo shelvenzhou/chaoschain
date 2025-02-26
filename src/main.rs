@@ -135,7 +135,7 @@ async fn load_character_configs() -> Result<Vec<agent::AgentInfo>> {
 }
 
 async fn random_delay() {
-    let delay = rand::thread_rng().gen_range(1000..3000);
+    let delay = rand::thread_rng().gen_range(55000..65000);
     tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
 }
 
