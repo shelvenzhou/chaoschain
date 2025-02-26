@@ -6,7 +6,7 @@
 # Rust specific files
 /target/
 **/*.rs.bk
-Cargo.lock
+# Cargo.lock
 **/*.rustfmt
 
 # Development tool configs
