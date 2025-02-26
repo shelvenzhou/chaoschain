@@ -1,0 +1,52 @@
+# Environment files
+.env
+.env.*
+*.env
+
+# Rust specific files
+/target/
+**/*.rs.bk
+Cargo.lock
+**/*.rustfmt
+
+# Development tool configs
+.idea/
+.vscode/
+*.sublime-*
+.editorconfig
+
+# Miscellaneous
+.git/
+.gitignore
+.github/
+.gitlab-ci.yml
+*.md
+LICENSE
+.dockerignore
+Dockerfile*
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Keys and certificates
+*.pem
+*.key
+*.cert
+*.crt
+
+# Other unnecessary files
+/docs/
+/tests/
+/examples/
+/scripts/

@@ -89,8 +89,8 @@ pub async fn start_web_server(
         .layer(cors)
         .with_state(app_state);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-    println!("Web server listening on http://127.0.0.1:3000");
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    println!("Web server listening on http://0.0.0.0:3000");
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -104,7 +104,7 @@ async fn get_network_status(State(state): State<Arc<AppState>>) -> Json<NetworkS
     let chain_state = state_guard.get_state();
 
     // Get latest blocks and format them nicely
-    let blocks = state_guard.get_latest_blocks(100);
+    let blocks = state_guard.get_latest_blocks(10);
     let latest_blocks = blocks
         .iter()
         .map(|block| {

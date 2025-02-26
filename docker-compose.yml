@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  chaoschain:
+    image: chaoschain:latest
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./configs:/app/configs
+    restart: unless-stopped
