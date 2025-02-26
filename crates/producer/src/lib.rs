@@ -182,7 +182,7 @@ impl Producer {
             });
 
         let request = CreateChatCompletionRequest {
-            model: "gpt-4o".to_string(),
+            model: "gpt-4o-mini".to_string(),
             messages: vec![system_message],
             temperature: Some(0.9), // Higher temperature for more creative responses
             max_tokens: Some(200),

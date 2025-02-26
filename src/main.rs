@@ -37,7 +37,7 @@ impl OpenAIConfig {
                 .unwrap_or_else(|_| "https://api.openai.com/v1".to_string()),
             api_key: std::env::var("OPENAI_API_KEY")
                 .map_err(|_| anyhow::anyhow!("OPENAI_API_KEY not set"))?,
-            model: std::env::var("AGENT_MODEL").unwrap_or_else(|_| "gpt-4o".to_string()),
+            model: std::env::var("AGENT_MODEL").unwrap_or_else(|_| "gpt-4o-mini".to_string()),
             temperature: std::env::var("TEMPERATURE")
                 .unwrap_or_else(|_| "0.9".to_string())
                 .parse()
